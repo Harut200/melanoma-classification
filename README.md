@@ -172,7 +172,7 @@ melanoma-classification/
                             # overlap, resolution spread, train vs test distributions
 ```
 
-The directory scaffold below is committed on `dev` (empty folders held open with `.gitkeep`). None of the files in it exist yet:
+The directory scaffold below is committed on `main` and `dev` (empty folders held open with `.gitkeep`). None of the files in it exist yet:
 
 ```
 melanoma-classification/
