@@ -8,7 +8,7 @@ Melanoma is the skin cancer that actually kills people. It is also rare compared
 
 The SIIM-ISIC data is hard for reasons that have little to do with which network you pick. Only 1.76% of the training rows are malignant, so a model that answers "benign" every time scores 98.2% accuracy and is worthless. The images come from many different cameras and clinics, with resolutions running from 640x480 up to 6000x4000 in the same training set. Patients repeat, heavily: one patient contributes 115 images. Split the rows at random and the same person's skin lands on both sides of the split, which quietly inflates every validation number you look at.
 
-This repository currently holds the exploratory analysis in [notebooks/eda.ipynb](notebooks/eda.ipynb), which produced every dataset number quoted below. The training and inference code is not committed yet. Sections below marked TODO are the parts that are still missing, and they are marked rather than guessed at.
+This repository currently holds the exploratory analysis in [notebooks/eda.ipynb](notebooks/eda.ipynb). The findings live in the notebook and are not restated here. The training and inference code is not committed yet. Sections below marked TODO are the parts that are still missing, and they are marked rather than guessed at.
 
 ## Dataset
 
@@ -28,58 +28,7 @@ Class balance in the training set:
 
 Metadata columns are `image_name`, `patient_id`, `sex`, `age_approx`, `anatom_site_general_challenge`, `diagnosis`, `benign_malignant`, `target`. The test set drops the last three.
 
-### Missing values
-
-| Column | Missing (train) | Missing (test) |
-|---|---|---|
-| sex | 65 | 0 |
-| age_approx | 68 | 0 |
-| anatom_site_general_challenge | 527 | 351 |
-| everything else | 0 | 0 |
-
-Missingness in `sex` and `age_approx` is not independent. 65 rows are missing both, 3 rows are missing only `age_approx`, and no row is missing only `sex`. Whatever went wrong went wrong at the row level, so imputing the two columns separately is a bit of a lie.
-
-### Feature distributions
-
-Anatomical site, training set:
-
-| Site | Count |
-|---|---|
-| torso | 16,845 |
-| lower extremity | 8,417 |
-| upper extremity | 4,983 |
-| head/neck | 1,855 |
-| palms/soles | 375 |
-| oral/genital | 124 |
-
-The test set uses the same six categories. `head/neck` has the highest malignant rate of any site, but with 1,855 samples that estimate is shakier than the torso one. Exact per-site malignant rates: TODO (the notebook plots them, it does not print the numbers).
-
-Sex: 17,080 male, 15,981 female, 65 missing. Roughly balanced. Malignant rate is higher for male patients.
-
-Age: mean 48.9, median 50, range 0 to 90, recorded in 5 year buckets. Skewness is 0.081, so it is effectively symmetric and needs no transform. Malignant rate rises with age. Two rows have `age_approx = 0` and both belong to patient `IP_1300691`, who has a third row recording age 10. Either a data entry error or the dataset spans several years of visits.
-
-### Patients
-
-2,056 patients have more than one image. The largest have 115 images each (`IP_7279968`, `IP_4479736`, `IP_4938382`, `IP_4382720`). Spot checking one patient's images confirms they are distinct lesions and angles, not copies of the same photo, but they still share skin tone, hair, camera, and clinic. Total unique patients in train: TODO.
-
-There are zero exact duplicate rows in either split.
-
-### Image resolution
-
-From a random sample of 200 training images:
-
-| Resolution | Count |
-|---|---|
-| 6000x4000 | 96 |
-| 1872x1053 | 30 |
-| 640x480 | 25 |
-| 5184x3456 | 24 |
-| 3264x2448 | 11 |
-| 2592x1936 | 9 |
-| 4288x2848 | 4 |
-| 4032x3024 | 1 |
-
-Everything gets resized to a fixed input size during preprocessing.
+Images vary in resolution across the dataset, so everything gets resized to a fixed input size during preprocessing. Metadata has some missing values in `sex`, `age_approx`, and `anatom_site_general_challenge`. Many patients contribute more than one image, which drives the split strategy described under Approach.
 
 ### Getting the data
 
@@ -260,7 +209,7 @@ At 1.76% positives, a high ROC-AUC can coexist with missing most of the melanoma
 
 The `diagnosis` column is mostly `unknown` for benign lesions, so the labels are coarser than they look. `benign_malignant` and `target` carry the same information, just in different formats.
 
-Two patients have suspicious `age_approx` values (the zero age rows discussed above), and 527 training rows have no anatomical site. Whatever the model does with the metadata features has to tolerate that.
+The metadata has gaps and at least one implausible age value. Whatever the model does with the metadata features has to tolerate missing and wrong entries. See the notebook for the details.
 
 Known unknowns because the model is not built: generalization to other cameras, calibration of the output probabilities, behavior on lesion types absent from the training set. All TODO.
 
