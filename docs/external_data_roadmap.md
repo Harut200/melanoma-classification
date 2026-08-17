@@ -127,7 +127,7 @@ python src/step4_add_external.py --download
 python src/step4_add_external.py --prepare --which all
 python src/step4_add_external.py --check-duplicates
 
-python src/step3_resize_images.py \
+python src/step3_resize_images.py --external \
     --input-folder data/raw/isic2019/ISIC_2019_Training_Input \
     --image-list data/processed/external_2019.csv \
     --output-folder data/processed/train_512
@@ -136,8 +136,9 @@ python src/step2_make_folds.py --external-csv data/processed/external_2019.csv
 python src/step5_package.py --archive
 ```
 
-Order matters: `--check-duplicates` must run **before** the final
-`step2_make_folds.py`, or dropped duplicates stay in the folds.
+Order matters: `--check-duplicates` must run **before** the external photos are
+resized and before the final `step2_make_folds.py`. Deduplicating afterwards
+leaves orphan resized files and dropped rows still sitting in the folds.
 
 ## How we will know it worked
 

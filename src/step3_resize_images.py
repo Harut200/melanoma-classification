@@ -216,6 +216,8 @@ def main():
                         help="how many CPU cores to use, 0 means all of them")
     parser.add_argument("--no-hair-removal", action="store_true",
                         help="skip the hair removal step")
+    parser.add_argument("--external", action="store_true",
+                        help="use this when the image list is the external ISIC 2019 csv")
     parser.add_argument("--limit", type=int, default=0,
                         help="only do the first N photos, useful for a quick test")
     args = parser.parse_args()
@@ -257,9 +259,19 @@ def main():
     # --- build the list of jobs --------------------------------------------
     image_list = pd.read_csv(image_list_path)
 
-    # External photos live in their own folder, so we leave them to step 4.
+    # metadata_clean.csv holds BOTH our photos and the external ones, but they
+    # live in different folders on disk. So we keep only the half that matches
+    # the folder we were pointed at.
     if "is_external" in image_list.columns:
-        image_list = image_list[image_list["is_external"] == 0]
+        if args.external:
+            image_list = image_list[image_list["is_external"] == 1]
+        else:
+            image_list = image_list[image_list["is_external"] == 0]
+
+    if len(image_list) == 0:
+        print("There are no photos to process in " + image_list_path + ".")
+        print("If this is the external ISIC 2019 list, add the --external flag.")
+        sys.exit(1)
 
     if args.limit > 0:
         image_list = image_list.head(args.limit)

@@ -111,13 +111,19 @@ python src/step4_add_external.py --download
 python src/step4_add_external.py --prepare --which all
 python src/step4_add_external.py --check-duplicates
 
-python src/step3_resize_images.py \
+python src/step3_resize_images.py --external \
     --input-folder data/raw/isic2019/ISIC_2019_Training_Input \
     --image-list data/processed/external_2019.csv \
     --output-folder data/processed/train_512
 
 python src/step2_make_folds.py --external-csv data/processed/external_2019.csv
 ```
+
+Run `--check-duplicates` **before** resizing the external photos. Removing a
+duplicate afterwards leaves its resized copy behind, unreferenced by any csv.
+
+Or skip all of this and run `./run_all.sh`, which does the whole pipeline from
+nothing in the right order.
 
 This takes the cancer rate from 1.76% to 8.73%.
 
