@@ -98,7 +98,7 @@ Expected figure filenames: TODO. The EDA plots (target distribution, malignant r
 
 ## Quickstart
 
-**Read this first:** `predict.py`, `requirements.txt`, and the trained weights are not in the repository yet. The commands below are the intended interface and will fail today. What does work right now is opening the EDA notebook, which is the last block in this section.
+**Read this first:** `predict.py` and the trained weights are not in the repository yet. The commands below are the intended interface and will fail today. What does work right now is creating the environment and opening the EDA notebook, which is the last block in this section.
 
 Clone:
 
@@ -109,9 +109,11 @@ cd melanoma-classification
 
 Create a virtual environment:
 
+Python 3.12 is required — TensorFlow publishes no wheels for 3.13 or 3.14.
+
 ```bash
-python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+python3.12 -m venv .venv
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
 ```
 
 Install dependencies:
@@ -120,7 +122,7 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-`requirements.txt` is TODO. The EDA notebook imports pandas, numpy, seaborn, matplotlib, missingno, scipy, scikit-learn, tensorflow, and pillow. Pinned versions: TODO.
+`requirements.txt` pins every dependency: pandas, numpy, scipy, scikit-learn, matplotlib, seaborn, missingno, pillow, opencv-python, tensorflow, kaggle, jupyter, tqdm, and PyYAML. The versions in it were resolved and import-tested together on macOS arm64.
 
 Download the trained weights:
 
@@ -194,7 +196,7 @@ melanoma-classification/
 │   ├── train.py            # TODO: training loop, writes weights
 │   └── evaluate.py         # TODO: metrics and figures from saved weights
 ├── predict.py              # TODO: single-image inference
-└── requirements.txt        # TODO: pinned dependencies
+└── requirements.txt        # pinned dependencies, needs Python 3.12
 ```
 
 ## Notes and limitations
