@@ -321,6 +321,19 @@ def unpack_the_photos(zip_path):
         print("the zip holds " + str(len(archive.namelist())) + " files, " +
               str(len(wanted)) + " of them are photos we want")
 
+        # If we found no photos, the zip is laid out differently than we expect
+        # and silently carrying on would leave us with nothing to resize. Stop
+        # here and show what is actually inside so it can be fixed quickly.
+        if len(wanted) == 0:
+            print("")
+            print("PROBLEM: no files matching jpeg/*.jpg were found in the zip.")
+            print("Here are the first 15 names it does contain:")
+            for name in archive.namelist()[:15]:
+                print("   " + name)
+            print("")
+            print("Fix the filter in unpack_the_photos() to match these names.")
+            sys.exit(1)
+
         done = 0
         started_at = time.time()
         for member in wanted:
