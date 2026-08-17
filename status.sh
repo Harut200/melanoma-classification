@@ -118,10 +118,10 @@ echo "--- LAST FEW LOG LINES ---"
 # cut -c1-160 matters: the old progress printing used carriage returns, which
 # make no new lines in a file, so one "line" can be megabytes wide. Without the
 # cut, tail happily prints the whole thing at you.
-grep -vE "B/s|it/s" "$LOG" 2>/dev/null \
+tr -d "\r" < "$LOG" 2>/dev/null \
     | cut -c1-160 \
-    | grep -vE "^ *([0-9.]+%? *)+$" \
-    | grep -v "^$" \
+    | grep -vE "B/s|it/s" \
+    | grep -vE "^[ 0-9.%]*$" \
     | tail -5
 
 echo ""
