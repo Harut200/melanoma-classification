@@ -32,22 +32,21 @@ say() {
     echo "==============================================================="
 }
 
-say "STEP 1a - the three csv files"
-$PYTHON src/step1_download.py --csv
-
-say "STEP 1b - the competition photos (about 29 GB, the slow part)"
-$PYTHON src/step1_download.py --images
-
-say "STEP 4a - download ISIC 2019 (9.1 GB, plus unzipping)"
+# The ISIC 2019 download comes from the ISIC servers, not Kaggle, so it is
+# unaffected by any Kaggle rate limiting. Doing it first means we make progress
+# even if Kaggle is making us wait.
+say "STEP 4a - download ISIC 2019 from the ISIC servers (9.1 GB, plus unzipping)"
 $PYTHON src/step4_add_external.py --download
 
 say "STEP 4b - turn ISIC 2019 into our column layout"
 $PYTHON src/step4_add_external.py --prepare --which all
 
-# This has to happen BEFORE we resize the external photos and before we build
-# the final folds. The ISIC archive is cumulative, so some 2019 photos are the
-# same photo as one of ours. If a copy sits in training while its twin sits in
-# validation, the validation score is a lie.
+say "STEP 1a - the three csv files"
+$PYTHON src/step1_download.py --csv
+
+say "STEP 1b - the competition photos (one big zip, the slow part)"
+$PYTHON src/step1_download.py --images
+
 say "STEP 4c - find photos that exist in both 2019 and 2020, and drop them"
 $PYTHON src/step4_add_external.py --check-duplicates --workers "$WORKERS"
 

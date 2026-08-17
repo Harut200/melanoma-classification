@@ -56,12 +56,11 @@ PAGE_SIZE = 200
 # Requests" if we ask for hundreds of pages in a row.
 LIST_PAGES = 5
 
-# How many photos to download at the same time. Too many and Kaggle starts
-# refusing connections; 8 is a safe, polite number.
-DOWNLOAD_THREADS = 8
-
-# Used only for the "is there enough disk space" check before we start.
-AVERAGE_PHOTO_BYTES = 700 * 1024
+# Rough sizes, used only for the disk-space check before we start.
+# The zip is much bigger than the photos because it also carries DICOM and
+# TFRecord copies of the very same images, which we do not use.
+FULL_ZIP_BYTES = 110 * 1024 * 1024 * 1024
+PHOTOS_BYTES = 35 * 1024 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -253,100 +252,95 @@ def download_csv_files(api):
     print("Done. The csv files are in: " + RAW_FOLDER)
 
 
-def download_one_photo(job):
-    """Download a single photo. Runs inside a worker thread."""
-    api = job["api"]
-    remote_name = job["remote_name"]
-    save_folder = job["save_folder"]
-    local_path = job["local_path"]
-
-    # Already downloaded on an earlier run, so skip it. This makes the whole
-    # download safe to stop and start again.
-    if os.path.exists(local_path):
-        return "skipped"
-
-    try:
-        api.competition_download_file(COMPETITION, remote_name, path=save_folder)
-        return "ok"
-    except Exception as error:
-        return "failed: " + remote_name + " (" + str(error)[:80] + ")"
-
-
 def download_images(api):
     """
     Download the photos.
 
-    We do NOT ask Kaggle for the file list here. We already know every photo
-    name, because it is in train.csv and test.csv. Reading the names from those
-    csv files is far faster than paging through 44,000 entries.
+    IMPORTANT - why this asks Kaggle for ONE big zip instead of 44,108 photos:
 
-    So run this first:  python src/step1_download.py --csv
+    The obvious way is to loop over the photo names and download them one by
+    one. We tried that. Kaggle allows a few hundred file downloads and then
+    starts answering 404 to EVERY download request, including files that worked
+    minutes earlier. It is a rate limit wearing a "not found" disguise, and once
+    you trigger it you have to wait it out.
+
+    So we make a single request instead. Kaggle sends the whole competition as
+    one zip, we unpack only the jpeg photos out of it, and we throw the rest
+    away. The zip also contains DICOM and TFRecord copies of the same photos,
+    which we do not need - that is why the download is bigger than the photos.
+
+    One request cannot be rate limited the way 44,108 requests can.
     """
-    import pandas as pd
+    if not os.path.exists(RAW_FOLDER):
+        os.makedirs(RAW_FOLDER)
 
-    jobs = []
+    zip_path = os.path.join(RAW_FOLDER, COMPETITION + ".zip")
 
-    for split_name in ["train", "test"]:
-        csv_path = os.path.join(RAW_FOLDER, split_name + ".csv")
-        if not os.path.exists(csv_path):
-            print("Could not find " + csv_path)
-            print("Run this first:  python src/step1_download.py --csv")
-            sys.exit(1)
+    if os.path.exists(zip_path):
+        print("the zip is already downloaded, skipping straight to unpacking")
+    else:
+        # The zip holds the photos plus DICOM and TFRecord copies, so it is much
+        # bigger than the photos alone. Make sure both it and the unpacked
+        # photos will fit before we start.
+        check_there_is_enough_space(FULL_ZIP_BYTES + PHOTOS_BYTES,
+                                    "the competition download")
 
-        table = pd.read_csv(csv_path)
-        save_folder = os.path.join(RAW_FOLDER, "jpeg", split_name)
-        if not os.path.exists(save_folder):
-            os.makedirs(save_folder)
+        print("downloading the whole competition as one zip")
+        print("this is roughly " + show_gb(FULL_ZIP_BYTES) + " and takes a couple of hours")
+        print("")
+        started_at = time.time()
+        api.competition_download_files(COMPETITION, path=RAW_FOLDER, quiet=False)
+        minutes = (time.time() - started_at) / 60
+        print("")
+        print("downloaded in " + str(round(minutes, 1)) + " minutes")
 
-        for image_name in table["image_name"]:
-            jobs.append({
-                "api": api,
-                "remote_name": "jpeg/" + split_name + "/" + str(image_name) + ".jpg",
-                "save_folder": save_folder,
-                "local_path": os.path.join(save_folder, str(image_name) + ".jpg"),
-            })
+    if not os.path.exists(zip_path):
+        print("")
+        print("The download did not produce " + zip_path)
+        print("If you saw 404 errors, Kaggle has rate limited this account.")
+        print("Wait an hour and run the same command again.")
+        sys.exit(1)
 
-    print("photos to download: " + str(len(jobs)))
-    print("this is about 30 GB and takes a while")
+    unpack_the_photos(zip_path)
 
-    # Rough size check before we start, using an average photo size.
-    check_there_is_enough_space(len(jobs) * AVERAGE_PHOTO_BYTES, "the photos")
 
-    # Downloading waits on the network, not the CPU, so THREADS are the right
-    # tool here (step 3 uses processes instead, because resizing is CPU work).
-    from concurrent.futures import ThreadPoolExecutor
-
-    done = 0
-    skipped = 0
-    problems = []
-    started_at = time.time()
-
-    with ThreadPoolExecutor(max_workers=DOWNLOAD_THREADS) as pool:
-        for result in pool.map(download_one_photo, jobs):
-            done = done + 1
-            if result == "skipped":
-                skipped = skipped + 1
-            elif result != "ok":
-                problems.append(result)
-
-            if done % 500 == 0:
-                seconds = time.time() - started_at
-                speed = done / seconds
-                left_minutes = (len(jobs) - done) / speed / 60
-                print("   " + str(done) + " / " + str(len(jobs)) +
-                      "   " + str(round(speed, 1)) + " photos/second" +
-                      "   about " + str(round(left_minutes)) + " min left")
+def unpack_the_photos(zip_path):
+    """Pull only the jpeg/ photos out of the big zip and ignore everything else."""
+    import zipfile
 
     print("")
-    print("downloaded " + str(done - skipped - len(problems)) + " photos")
-    if skipped > 0:
-        print("(" + str(skipped) + " were already there and were skipped)")
-    if len(problems) > 0:
-        print("")
-        print("WARNING: " + str(len(problems)) + " photos failed. Run the same")
-        print("command again - it skips what is already done and retries the rest.")
-        for message in problems[:5]:
-            print("   " + message)
+    print("unpacking the photos out of the zip")
+
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        # Look at what is inside and keep only the ordinary photos.
+        wanted = []
+        for member in archive.namelist():
+            if member.startswith("jpeg/") and member.lower().endswith(".jpg"):
+                wanted.append(member)
+
+        print("the zip holds " + str(len(archive.namelist())) + " files, " +
+              str(len(wanted)) + " of them are photos we want")
+
+        done = 0
+        started_at = time.time()
+        for member in wanted:
+            target = os.path.join(RAW_FOLDER, member)
+            # Skip anything we already unpacked, so this is restartable too.
+            if not os.path.exists(target):
+                archive.extract(member, RAW_FOLDER)
+            done = done + 1
+            if done % 5000 == 0:
+                speed = done / (time.time() - started_at)
+                print("   " + str(done) + " / " + str(len(wanted)) +
+                      "   " + str(round(speed)) + " photos/second")
+
+    print("")
+    print("unpacked " + str(done) + " photos into " +
+          os.path.join(RAW_FOLDER, "jpeg"))
+    print("")
+    print("The zip is no longer needed. Delete it to get "
+          + show_gb(os.path.getsize(zip_path)) + " back:")
+    print("   rm " + zip_path)
 
 
 # ---------------------------------------------------------------------------
