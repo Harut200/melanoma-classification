@@ -185,6 +185,8 @@ melanoma-classification/
 ├── notebooks/
 │   └── eda.ipynb
 ├── reports/
+│   ├── EDA_Report.pdf      # EDA write-up, distributable copy
+│   ├── EDA_Report.md       # same write-up in Markdown, diff-able
 │   ├── results.csv         # TODO: one row per model, metrics as columns
 │   ├── oof_predictions.csv # TODO: out-of-fold predictions for threshold picking
 │   └── figures/            # TODO: ROC, PR, confusion matrix
