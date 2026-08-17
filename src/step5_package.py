@@ -126,8 +126,16 @@ def write_readme(handover_folder, size, train_count, test_count, folds):
     if test_count > 0:
         lines.append("| `test_" + str(size) + "/` | " + str(test_count) + " test photos |")
     lines.append("| `folds.csv` | image_name, patient_id, target, fold, is_external |")
-    lines.append("| `metadata_clean.csv` | same rows plus age/sex/body-site as numbers |")
+    lines.append("| `metadata_clean.csv` | training rows plus age/sex/body-site as numbers |")
+    lines.append("| `metadata_test_clean.csv` | the same numbers for the test photos, so you can predict on them |")
+    lines.append("| `sample_submission.csv` | the format Kaggle wants your predictions in |")
+    lines.append("| `original_train.csv`, `original_test.csv` | the untouched Kaggle files, for reference |")
     lines.append("| `checksums.sha256` | to verify nothing broke while copying |")
+    lines.append("")
+    lines.append("Note that `metadata_clean.csv` covers training only and")
+    lines.append("`metadata_test_clean.csv` covers the test photos. Missing ages in the test")
+    lines.append("file were filled with the median age of the TRAINING data, not the test")
+    lines.append("data, so both are encoded the same way the model was trained to expect.")
     lines.append("")
 
     lines.append("## Columns")
@@ -265,10 +273,22 @@ def main():
                     shutil.copy2(source_file, destination_file)
 
     # --- copy the csv files -------------------------------------------------
-    for file_name in ["folds.csv", "metadata_clean.csv", "external_2019.csv"]:
+    for file_name in ["folds.csv", "metadata_clean.csv", "metadata_test_clean.csv",
+                      "external_2019.csv"]:
         source_file = os.path.join(args.processed_folder, file_name)
         if os.path.exists(source_file):
             shutil.copy2(source_file, os.path.join(handover_folder, file_name))
+
+    # sample_submission.csv shows the exact format Kaggle wants a prediction in,
+    # and the original csv files are handy to have for reference. They are tiny.
+    raw_folder = os.path.join(os.path.dirname(args.processed_folder), "raw")
+    for file_name in ["sample_submission.csv", "train.csv", "test.csv"]:
+        source_file = os.path.join(raw_folder, file_name)
+        if os.path.exists(source_file):
+            target = file_name
+            if file_name in ("train.csv", "test.csv"):
+                target = "original_" + file_name
+            shutil.copy2(source_file, os.path.join(handover_folder, target))
 
     # --- write the README and the checksums ---------------------------------
     folds = pd.read_csv(folds_path)

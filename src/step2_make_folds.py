@@ -269,6 +269,48 @@ def print_a_summary(data):
 
 
 # ---------------------------------------------------------------------------
+# Step 2e - the test set
+# ---------------------------------------------------------------------------
+
+def clean_the_test_set(test_csv_path, age_from_training, out_folder):
+    """
+    Give the test photos the same treatment as the training photos.
+
+    Without this the team can resize the test photos but cannot actually predict
+    on them, because the model expects sex, body site and age as numbers and
+    there would be nothing to feed it.
+
+    The important bit is `age_from_training`. We fill missing test ages with the
+    median age of the TRAINING data, not of the test data. The model learned
+    what "45" means from the training set, so the test set has to be prepared
+    the exact same way. Using the test set's own median would shift the numbers
+    slightly and the model would be fed something it was never trained on.
+
+    The test set has no target and no fold, because Kaggle keeps the answers.
+    """
+    if not os.path.exists(test_csv_path):
+        print("no test.csv found, skipping the test set")
+        return
+
+    test = pd.read_csv(test_csv_path)
+    test["is_external"] = 0
+
+    print("")
+    print("test set: " + str(len(test)) + " photos, " +
+          str(test["patient_id"].nunique()) + " patients")
+
+    test = fill_missing_values(test, age_from_training)
+    test = turn_words_into_numbers(test)
+
+    columns = ["image_name", "patient_id", "sex", "age_approx",
+               "anatom_site_general_challenge",
+               "sex_enc", "site_enc", "age_norm"]
+    save_path = os.path.join(out_folder, "metadata_test_clean.csv")
+    test[columns].to_csv(save_path, index=False)
+    print("saved " + save_path)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -356,6 +398,11 @@ def main():
     print("")
     print("saved " + metadata_path)
     print("saved " + folds_path)
+
+    # Prepare the test set too, using the training median so both sets are
+    # encoded identically.
+    test_csv_path = os.path.join(os.path.dirname(args.train_csv), "test.csv")
+    clean_the_test_set(test_csv_path, median_age, args.out_folder)
 
 
 if __name__ == "__main__":
