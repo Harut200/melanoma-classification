@@ -1,0 +1,40 @@
+# SIIM-ISIC Melanoma Classification — pinned dependencies
+#
+# Python 3.12 is required. TensorFlow publishes no wheels for 3.13 or 3.14,
+# so a newer interpreter will fail to resolve this file.
+#
+#   python3.12 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Versions below were resolved and import-tested together on macOS arm64.
+
+# --- data handling ---
+pandas==3.0.5
+numpy==2.5.2
+scipy==1.18.0
+scikit-learn==1.9.0
+
+# --- plotting / EDA ---
+matplotlib==3.11.1
+seaborn==0.13.2
+missingno==0.5.2
+
+# --- image I/O and preprocessing ---
+pillow==12.3.0
+opencv-python==5.0.0.93
+
+# --- modelling ---
+tensorflow==2.21.0
+# Apple Silicon GPU acceleration is optional and not pinned here, because
+# tensorflow-metal lags the TensorFlow release cycle. Add it only after
+# checking it supports the tensorflow version above:
+#   pip install tensorflow-metal
+
+# --- data download ---
+kaggle==2.2.4
+
+# --- tooling ---
+jupyter==1.1.1
+tqdm==4.70.0
+PyYAML==6.0.3
