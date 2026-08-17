@@ -192,8 +192,15 @@ melanoma-classification/
 │   ├── results.csv         # TODO: one row per model, metrics as columns
 │   ├── oof_predictions.csv # TODO: out-of-fold predictions for threshold picking
 │   └── figures/            # TODO: ROC, PR, confusion matrix
+├── docs/
+│   ├── preprocessing.md    # how to run the 5 preprocessing steps
+│   └── external_data_roadmap.md  # plan for adding ISIC 2019
 ├── src/
-│   ├── dataset.py          # TODO: loading, patient-grouped splits, augmentation
+│   ├── step1_download.py   # get the data from Kaggle
+│   ├── step2_make_folds.py # clean metadata, patient-level folds
+│   ├── step3_resize_images.py  # resize to 512, remove hair
+│   ├── step4_add_external.py   # add ISIC 2019 for the class imbalance
+│   ├── step5_package.py    # pack the result for the modelling team
 │   ├── model.py            # TODO: architecture definition
 │   ├── train.py            # TODO: training loop, writes weights
 │   └── evaluate.py         # TODO: metrics and figures from saved weights

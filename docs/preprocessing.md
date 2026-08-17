@@ -1,158 +1,165 @@
-# Preprocessing runbook
+# Preprocessing - how to run it
 
-Everything here runs on the CPU server (14 cores / 20 threads, 64 GB RAM, ~300 GB
-free). No GPU is needed for any of it — the work is decode, resize, inpaint,
-encode, which is embarrassingly parallel and I/O bound.
+Five scripts, run in order. Each one writes files that the next one reads, so if
+you follow the numbers you cannot get lost.
 
-Model training does **not** happen here. The last step packages the output for
-whoever runs the experiments, on a machine that has a GPU.
+| Script | What it does | Roughly how long |
+| --- | --- | --- |
+| `step1_download.py` | get the data from Kaggle | 1-2 hours (30 GB) |
+| `step2_make_folds.py` | clean the metadata, build the folds | seconds |
+| `step3_resize_images.py` | resize photos, remove hair | 15-40 min |
+| `step4_add_external.py` | add ISIC 2019 to fix the imbalance | ~1 hour |
+| `step5_package.py` | pack it up for the team | 10 min |
 
-## 0. Environment
+Every script prints `--help` if you run it with no options.
 
-Python 3.12 is required — TensorFlow publishes no wheels for 3.13 or 3.14.
+## Where this runs
+
+The server: Rocky Linux 10, Intel i5-13500 (14 cores / 20 threads), 62 GB RAM,
+~390 GB free. Everything here is CPU work, so no GPU is needed.
+
+**Training the model does not happen here** — there is no GPU on this box.
+Step 5 packages the data so it can go to a machine that has one.
+
+## Setup, once
 
 ```bash
-git clone https://github.com/Harut200/melanoma-classification.git
-cd melanoma-classification
-git checkout dp_h
-
+cd ~/melanoma-classification
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 1. Kaggle authentication
+Python 3.12 specifically. TensorFlow does not publish builds for 3.13 or 3.14 yet.
 
-The old `~/.kaggle/kaggle.json` flow is gone as of kaggle 2.2.
+## Step 1 - download
 
-```bash
-kaggle auth login                     # OAuth, opens a browser
-# headless server instead:
-export KAGGLE_API_TOKEN=<token from kaggle.com/settings/api>
-```
-
-Accept the competition rules on the website first, or every file returns 403.
-
-## 2. Download
-
-Check the real sizes before committing to anything:
+First log in to Kaggle:
 
 ```bash
-python src/download_data.py --list
+kaggle auth login
 ```
 
-Then:
+On a server with no browser, get a token from
+https://www.kaggle.com/settings/api and do this instead:
 
 ```bash
-python src/download_data.py --csv       # metadata, a few MB
-python src/download_data.py --images    # jpeg/, roughly 30 GB
+export KAGGLE_API_TOKEN=your_token_here
 ```
 
-`--images` refuses to start if free space minus a 5 GB margin is under what the
-files need. The DICOM and TFRecord copies in the competition archive are not
-downloaded — the JPEGs are the same pixels without the extra ~75 GB.
-
-## 3. External data for the class imbalance
-
-The malignant rate is 1.8%. The standard fix for this competition is folding in
-malignant cases from earlier ISIC years, which roughly triples the positive count.
+Then open the competition page and click **Join Competition**. Without that,
+every download fails with a 403 error.
 
 ```bash
-kaggle datasets list -s "isic 2019 jpeg"    # confirm the slug before pulling
-python src/download_data.py --dataset <owner>/<slug>
+python src/step1_download.py --list     # see what is there and how big
+python src/step1_download.py --csv      # small, do this first
+python src/step1_download.py --images   # about 30 GB, slow
 ```
 
-Two rules, both enforced in code rather than left to discipline:
-
-- External rows get `fold = -1` and never enter a validation fold. They are a
-  different distribution from the competition test set, so validating on them
-  breaks the correspondence between local CV and the leaderboard.
-- External `patient_id`s are namespaced `EXT{n}_...` so they cannot collide with
-  competition patients and silently merge two people into one group.
-
-Before using any external set, deduplicate against the 2020 data — the ISIC
-archives overlap between years, and a duplicate image spanning the train/val
-boundary is leakage wearing a different hat.
-
-## 4. Folds and metadata
+The photos take a long time. Start them in the background so the download
+survives your SSH connection dropping:
 
 ```bash
-python src/make_folds.py --external data/raw/<external>/train.csv
+nohup python src/step1_download.py --images > ~/download.log 2>&1 &
+tail -f ~/download.log      # watch it; Ctrl-C stops watching, not the download
 ```
 
-Writes `data/processed/folds.csv` and `metadata_processed.csv`, and refuses to
-write either if any patient spans two folds. Expect roughly 411 patients and a
-1.75–1.78% malignant rate per fold.
-
-## 5. Images to TFRecords
+## Step 2 - clean the metadata and build the folds
 
 ```bash
-python src/preprocess.py --split train --size 512 --workers 20
-python src/preprocess.py --split test  --size 512 --workers 20 \
-    --metadata data/raw/test.csv --image-dir data/raw/jpeg/test
+python src/step2_make_folds.py
 ```
 
-Roughly 15–40 minutes for all 44k images on 20 threads, dominated by decoding the
-6000x4000 originals. Output is ~5–6 GB.
+This is the step that prevents the biggest mistake in the whole project.
 
-Shards are written to a `.partial` name and renamed only on success, so an
-interrupted run never leaves a truncated file that looks complete.
+There are 33,126 photos from only 2,056 patients. If you split them randomly,
+the same patient lands in training *and* validation, the model learns to
+recognise the person rather than the cancer, and your validation score becomes a
+lie. So all photos of one patient are kept in the same fold, and the answer is
+saved to `folds.csv` so nobody has to remember to redo it.
 
-## 6. Verify before handing anything over
+The script refuses to save if any patient ended up in two folds. Expect about
+411 patients and 1.75-1.78% cancer in each fold.
+
+## Step 3 - resize the photos and remove hair
 
 ```bash
-python src/preprocess.py --verify data/processed/train_512
-python src/preprocess.py --verify data/processed/test_512
+python src/step3_resize_images.py --split train --workers 20
+python src/step3_resize_images.py --split test  --workers 20
 ```
 
-Decodes every example, asserts one consistent shape, and cross-checks the count
-against `manifest.json`.
+Output is normal `.jpg` files, 512x512, in `data/processed/train_512/`. You can
+open them in any image viewer and look at them.
 
-## 7. Hand off
+Two things happen to each photo:
+
+- **Square crop then resize.** Originals range from 640x480 to 6000x4000. We cut
+  a square from the middle and shrink it, rather than squashing the photo into a
+  square, because squashing changes the shape of the mole.
+- **Hair removal.** Body hair lying across a mole is noise. We find the dark thin
+  lines and paint over them using the surrounding colours.
+
+Safe to stop and restart — photos that are already done get skipped.
+
+## Step 4 - add ISIC 2019
+
+Full detail and the reasoning is in [external_data_roadmap.md](external_data_roadmap.md).
+Short version:
 
 ```bash
-python src/export_dataset.py --stage                        # inspect first
-python src/export_dataset.py --create --user <kaggle-user>  # private dataset
+python src/step4_add_external.py --download
+python src/step4_add_external.py --prepare --which all
+python src/step4_add_external.py --check-duplicates
+
+python src/step3_resize_images.py \
+    --input-folder data/raw/isic2019/ISIC_2019_Training_Input \
+    --image-list data/processed/external_2019.csv \
+    --output-folder data/processed/train_512
+
+python src/step2_make_folds.py --external-csv data/processed/external_2019.csv
 ```
 
-Then on the dataset page: **Settings → Collaborators → add teammate**.
+This takes the cancer rate from 1.76% to 8.73%.
 
-Staging hardlinks the shards, so the export folder costs no extra disk. The
-upload is private by default. Later updates:
+Run `--check-duplicates` **before** the final `step2_make_folds.py`. The ISIC
+archive is cumulative, so some 2019 photos also exist in our 2020 set, and a
+duplicate spanning the train/validation line is leakage.
+
+## Step 5 - pack it up and send it
 
 ```bash
-python src/export_dataset.py --version "added ISIC 2019 external malignant"
+python src/step5_package.py --archive
 ```
 
-A `README.md` is generated into the upload with the fold rules, the TFRecord
-schema, and the actual per-fold balance table, so the modelling work does not
-have to come back and ask what the columns mean.
+Builds `data/processed/handover/` containing the photos, the csv files, a
+`README.md` explaining the rules to whoever trains the model, and
+`checksums.sha256`.
 
-## Why the teammate gets a Kaggle dataset
+Send it:
 
-The server has no GPU. Kaggle gives free GPU and TPU quota, reads TFRecords
-natively, and versions the dataset so there is never ambiguity about which copy a
-result came from. The alternatives — Drive, HuggingFace, a shared folder — all
-work, but only this one puts a GPU next to the data at zero cost.
+```bash
+rsync -avP data/processed/handover/ someone@their-machine:~/melanoma-data/
+```
 
-## Design decisions worth knowing
+`rsync` is worth it over `scp` because it resumes if the connection drops, which
+it will on a multi-GB transfer.
 
-**Centre crop, not squash.** Resolutions run 640x480 to 6000x4000 across several
-aspect ratios. Stretching to a square distorts lesion shape, and shape is one of
-the things a dermoscopic model reads.
+If they cannot use rsync, `--archive` also builds a single `.tar` file. It is
+`.tar` and not `.tar.gz` on purpose: jpg files are already compressed, so gzip
+would take a long time to save almost nothing.
 
-**Hair removal after resize, not before.** The DullRazor blackhat kernel is a
-fixed pixel size. Applied to the original, it means something different for a
-640x480 image than a 6000x4000 one. Applied after the resize, it is consistent.
-Measured on test images it removes ~99% of hair-like pixels while changing mean
-intensity by ~1%.
+## If something goes wrong
 
-**`unknown` category, not modal fill.** The EDA found missingness in `sex` and
-`age_approx` is correlated, so those values are not missing at random. Filling
-with the mode would fabricate signal; an explicit category lets the model learn
-that missingness itself carries information. `age_approx` uses the median because
-it has no natural "unknown" bucket in a continuous feature.
+**"403" or an empty file list from Kaggle** — you have not clicked "Join
+Competition" on the website.
 
-**Folds frozen in a CSV.** With 33,126 images from 2,056 patients, a row-level
-split leaks. Computing the split once and shipping it means no downstream
-notebook can accidentally undo it.
+**Step 2 says it found an unexpected body site** — external data came in with
+names step 2 does not know. Run step 4's `--prepare` first, which translates
+them.
+
+**Step 3 is slow** — check you passed `--workers 20`. The default uses every
+core, but if you are sharing the machine you may want fewer.
+
+**Step 5 warns the photo count and the csv row count disagree** — usually step 3
+has not finished, or the external photos have not been resized yet. Do not send
+the package until they match.
