@@ -22,7 +22,10 @@ missingno==0.5.2
 
 # --- image I/O and preprocessing ---
 pillow==12.3.0
-opencv-python==5.0.0.93
+# "headless" is the version WITHOUT the GUI parts. We never open a window, and
+# the normal opencv-python needs graphics libraries (libxcb) that a server does
+# not have installed. Using headless makes the same code work on both.
+opencv-python-headless==5.0.0.93
 
 # --- modelling ---
 tensorflow==2.21.0
