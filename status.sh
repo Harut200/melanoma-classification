@@ -19,7 +19,12 @@ TOTAL_EXTERNAL=25331
 
 count_jpg() {
     # $1 = folder. Prints 0 if the folder does not exist yet.
-    ls "$1"/*.jpg 2>/dev/null | wc -l | tr -d ' '
+    #
+    # We use find, not "ls folder/*.jpg". The shell expands that glob into one
+    # enormous command line, and with 58,000 files it goes over the limit and
+    # fails with "Argument list too long" - which looked exactly like zero
+    # photos and made a finished run look like a failed one.
+    find "$1" -maxdepth 1 -name "*.jpg" 2>/dev/null | wc -l | tr -d ' '
 }
 
 bar() {
@@ -78,7 +83,7 @@ if [ -n "$BIGZIP" ]; then
     bar $(( BIGZIP / 1048576 )) 110000
 fi
 
-EXT_RAW=$(ls "$RAW/isic2019/ISIC_2019_Training_Input" 2>/dev/null | wc -l | tr -d ' ')
+EXT_RAW=$(count_jpg "$RAW/isic2019/ISIC_2019_Training_Input")
 if [ "$EXT_RAW" -gt 0 ]; then
     echo -n "ISIC 2019 photos  "
     bar "$EXT_RAW" "$TOTAL_EXTERNAL"
