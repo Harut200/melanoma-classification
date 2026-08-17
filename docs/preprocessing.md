@@ -154,6 +154,49 @@ If they cannot use rsync, `--archive` also builds a single `.tar` file. It is
 `.tar` and not `.tar.gz` on purpose: jpg files are already compressed, so gzip
 would take a long time to save almost nothing.
 
+## Putting it on Google Drive instead
+
+`./upload_to_drive.sh` sends the tar file plus the small csv files to Drive. It
+needs an rclone remote called `gdrive`, which you set up once.
+
+The server has no web browser, so the login is done in two halves. Run this on
+the server:
+
+```bash
+rclone config
+```
+
+and answer:
+
+| Question | Answer |
+| --- | --- |
+| e/n/d/r/c/s/q | `n` (new remote) |
+| name | `gdrive` |
+| Storage | `drive` |
+| client_id | leave blank, press Enter |
+| client_secret | leave blank, press Enter |
+| scope | `1` (full access) |
+| service_account_file | leave blank |
+| Edit advanced config | `n` |
+| **Use auto config?** | **`n`** (this is the important one) |
+
+It then prints a command like `rclone authorize "drive" "...."`. Run that on
+your own laptop, which has a browser. Sign in to Google, allow access, and it
+prints a long token. Paste that token back into the server prompt.
+
+Then finish with `n` for team drive, `y` to confirm, `q` to quit.
+
+Two things worth knowing:
+
+- Answering `n` to "Use auto config?" is what makes this work on a machine with
+  no browser. If you answer `y` it tries to open a browser on the server and
+  hangs.
+- The token is a key to your Google Drive. Paste it straight into the server
+  prompt, do not put it in a chat or a file.
+
+After that, `./upload_to_drive.sh` does the rest and checks the file arrived
+intact by comparing hashes, not just file sizes.
+
 ## If something goes wrong
 
 **"403" or an empty file list from Kaggle** — you have not clicked "Join
