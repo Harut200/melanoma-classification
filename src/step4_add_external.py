@@ -124,17 +124,33 @@ SITE_NAME_MAP = {
 # PART 1 - download
 # ---------------------------------------------------------------------------
 
+# Remembers the last percentage we printed, so we print each one only once.
+last_percent_printed = [-1]
+
+
 def show_progress(block_number, block_size, total_size):
-    """Called by urlretrieve while downloading so we can print progress."""
+    """
+    Called repeatedly while downloading so we can show progress.
+
+    We only print when the whole-number percentage changes. Printing on every
+    chunk is fine on a screen, where "\r" rewrites the same line, but this
+    script normally runs with its output redirected into a log file, where
+    "\r" does nothing and you end up with a megabyte of "0.0% 0.0% 0.0%".
+    """
     if total_size <= 0:
         return
+
     downloaded = block_number * block_size
-    percent = downloaded * 100 / total_size
+    percent = int(downloaded * 100 / total_size)
     if percent > 100:
         percent = 100
-    # \r moves back to the start of the line so we overwrite instead of spamming.
-    sys.stdout.write("\r   " + str(round(percent, 1)) + "%   ")
-    sys.stdout.flush()
+
+    if percent != last_percent_printed[0]:
+        last_percent_printed[0] = percent
+        gb_done = downloaded / (1024 * 1024 * 1024)
+        gb_total = total_size / (1024 * 1024 * 1024)
+        print("   " + str(percent) + "%  (" + str(round(gb_done, 1)) + " of " +
+              str(round(gb_total, 1)) + " GB)", flush=True)
 
 
 def download_isic_2019(external_folder):
