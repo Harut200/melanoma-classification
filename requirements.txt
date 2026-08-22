@@ -28,12 +28,16 @@ pillow==12.3.0
 opencv-python-headless==5.0.0.93
 
 # --- modelling ---
-tensorflow==2.21.0
-# Apple Silicon GPU acceleration is optional and not pinned here, because
-# tensorflow-metal lags the TensorFlow release cycle. Add it only after
-# checking it supports the tensorflow version above:
-#   pip install tensorflow-metal
-
+# The training code in src/train.py is PyTorch, not TensorFlow. timm supplies
+# the pretrained backbones (resnet34, efficientnet_b0) and albumentations does
+# the augmentation.
+#
+# On a machine with an NVIDIA GPU, install torch from the CUDA index instead:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+torch==2.13.0
+torchvision==0.28.0
+timm==1.0.28
+albumentations==2.0.8
 # --- data download ---
 kaggle==2.2.4
 
