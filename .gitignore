@@ -9,3 +9,12 @@ venv/
 .DS_Store
 Thumbs.db
 .venv/
+
+# Model weights. These are large binaries; two copies of an 81 MB resnet34
+# checkpoint were committed once already and are permanent in history now.
+# Share weights through Drive, the same way the data is shared.
+models/
+*.pth
+*.pt
+*.h5
+*.ckpt
