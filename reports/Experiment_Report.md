@@ -218,11 +218,8 @@ first real operation.
 
 ## What to do next
 
-1. Run the efficientnet and 384 pixel experiments that got cut.
+1. Run the efficientnet and 384 pixel experiments.
 2. Rerun the ablation with matched gradient steps rather than matched epochs, to
    remove the one confound in the headline result.
 3. Train longer. Ten epochs was not enough to converge.
-4. Ensemble the five fold models and add test time augmentation. Usually worth
-   a few points of PR-AUC for no extra training.
-5. Use a held out third split for a final clean number before anyone quotes
-   these figures outside the team.
+4. Ensemble the five fold models and add test time augmentation.
