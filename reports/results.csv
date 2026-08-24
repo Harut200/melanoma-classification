@@ -1,0 +1,11 @@
+experiment,model,image_size,external,fold,epochs,best_epoch,pr_auc,roc_auc,minutes,n_train,n_val,source
+resnet34_224_ext,resnet34,224,True,0,10,10,0.2123,0.8846,22.3,51228,6627,reconstructed_from_log
+resnet34_224_ext,resnet34,224,True,1,10,10,0.1589,0.8704,22.4,51230,6625,reconstructed_from_log
+resnet34_224_ext,resnet34,224,True,2,10,7,0.2863,0.9039,22.4,51234,6621,reconstructed_from_log
+resnet34_224_ext,resnet34,224,True,3,10,7,0.2539,0.8972,22.2,51227,6628,reconstructed_from_log
+resnet34_224_ext,resnet34,224,True,4,10,5,0.2311,0.8805,22.4,51230,6625,reconstructed_from_log
+resnet34_224_noext,resnet34,224,False,0,10,8,0.1632,0.8628,12.5,26499,6627,reconstructed_from_log
+resnet34_224_noext,resnet34,224,False,1,10,10,0.157,0.8799,12.5,26501,6625,reconstructed_from_log
+resnet34_224_noext,resnet34,224,False,2,10,9,0.198,0.8855,12.5,26505,6621,reconstructed_from_log
+resnet34_224_noext,resnet34,224,False,3,10,7,0.2271,0.8964,12.6,26498,6628,reconstructed_from_log
+resnet34_224_noext,resnet34,224,False,4,10,10,0.1912,0.8797,12.5,26501,6625,reconstructed_from_log
