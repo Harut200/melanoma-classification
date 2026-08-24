@@ -72,6 +72,24 @@ What is left is the effect of the external data alone. Fold 1 improved by only
 +0.002 and fold 2 by +0.088, but the sign was positive every time, and that
 consistency is the evidence.
 
+### The same result on sensitivity
+
+Sensitivity at 95% specificity tells the same story, fold by fold:
+
+| fold | with external | without | difference |
+| ---: | ---: | ---: | ---: |
+| 0 | 0.5043 | 0.4359 | +0.0684 |
+| 1 | 0.4655 | 0.4397 | +0.0259 |
+| 2 | 0.5862 | 0.4655 | +0.1207 |
+| 3 | 0.5299 | 0.5128 | +0.0171 |
+| 4 | 0.5085 | 0.4831 | +0.0254 |
+| **mean** | **0.5189** | **0.4674** | **+0.0515** |
+
+Five out of five again, on a completely different metric. The paired t test here
+gives p = 0.057, just above the usual cutoff, which is what five samples buys
+you. The direction being unanimous on two independent measures is the stronger
+evidence.
+
 ### What it means in practice
 
 At a fixed 95% specificity, meaning we accept a 5% false alarm rate:
@@ -116,6 +134,18 @@ suspicion unless they are consistent across folds, the way this one was.
 
 **Ten epochs is short.** Loss was still going down. This is a baseline, not a
 tuned model.
+
+## Two things the numbers confirm about the fixes
+
+The `pos_weight` that the old code hardcoded to 55 turns out to be right only
+for the no external case. Computed from the data it came out at 9.41 with
+external data and 55.72 without. So the hardcoded value was correct for a
+dataset we no longer use, and wrong by a factor of about six for the one we do.
+
+The tuned decision threshold landed between 0.63 and 0.71 for the external runs
+and between 0.85 and 0.93 without. Nowhere near the 0.5 the old metrics code
+assumed. Scoring at 0.5 would have made precision look far worse than it is,
+because `pos_weight` deliberately pushes the outputs upward.
 
 ## The bug that had to be fixed first
 
