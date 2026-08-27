@@ -16,7 +16,9 @@ IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 class MelanomaDataset(Dataset):
     """
-    Reads the preprocessed jpg photos and hands back (image_tensor, target).
+    Reads the preprocessed jpg photos and hands back (image_tensor, target),
+    or (image_tensor, metadata_tensor, target) when `meta_cols` is given --
+    the final multi-modal model needs the metadata, the baseline models don't.
 
     `transform` is for AUGMENTATION ONLY (flips, rotations, colour jitter).
     Do not put Normalize or ToTensorV2 in it. Normalising and converting to a
@@ -24,12 +26,14 @@ class MelanomaDataset(Dataset):
     and applied twice in another.
     """
 
-    def __init__(self, df, img_dir, image_size=224, transform=None, has_target=True):
+    def __init__(self, df, img_dir, image_size=224, transform=None,
+                has_target=True, meta_cols=None):
         self.df = df.reset_index(drop=True)
         self.img_dir = img_dir
         self.image_size = image_size
         self.transform = transform
         self.has_target = has_target and 'target' in self.df.columns
+        self.meta_cols = list(meta_cols) if meta_cols else []
 
         if not os.path.isdir(img_dir):
             raise NotADirectoryError(
@@ -46,9 +50,9 @@ class MelanomaDataset(Dataset):
         img_path = os.path.join(self.img_dir, f"{image_name}.jpg")
 
         # A missing photo is a bug in the setup, not something to paper over.
-        # The previous version returned a black square here, which meant a wrong
-        # image directory trained the model on 58,000 identical blank images and
-        # reported metrics as if everything were fine.
+        # An earlier version returned a black square here, which meant a wrong
+        # image directory trained the model on thousands of identical blank
+        # images and reported metrics as if everything were fine.
         if not os.path.exists(img_path):
             raise FileNotFoundError(
                 f"Image not found: {img_path}\n"
@@ -79,6 +83,11 @@ class MelanomaDataset(Dataset):
             target = torch.tensor(float(row['target']), dtype=torch.float32)
         else:
             target = torch.tensor(0.0, dtype=torch.float32)
+
+        if self.meta_cols:
+            meta = row[self.meta_cols].to_numpy(dtype=np.float32)
+            meta = torch.from_numpy(meta)
+            return image, meta, target
 
         return image, target
 

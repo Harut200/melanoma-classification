@@ -13,7 +13,12 @@ Thumbs.db
 # Model weights. These are large binaries; two copies of an 81 MB resnet34
 # checkpoint were committed once already and are permanent in history now.
 # Share weights through Drive, the same way the data is shared.
-models/
+#
+# Anchored to the repo root (leading slash) on purpose: an unanchored
+# `models/` also matches src/models/, which silently excluded
+# src/models/final_model.py and src/models/baseline_models.py from every
+# commit ever made, despite both being imported throughout the codebase.
+/models/
 *.pth
 *.pt
 *.h5

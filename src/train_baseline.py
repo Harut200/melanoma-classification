@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from dataset import MelanomaDataset, check_images_exist
-from models import get_model
+from models.baseline_models import get_model
 from metrics import evaluate_predictions, find_best_threshold
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

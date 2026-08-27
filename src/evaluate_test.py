@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from dataset import MelanomaDataset, check_images_exist
 from metrics import evaluate_predictions, recall_at_specificity
-from models import get_model
+from models.baseline_models import get_model
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

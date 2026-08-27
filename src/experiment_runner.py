@@ -26,8 +26,8 @@ from torch.utils.data import DataLoader
 
 from dataset import MelanomaDataset, check_images_exist
 from metrics import evaluate_predictions, find_best_threshold, recall_at_specificity
-from models import get_model
-from train import build_augmentation, predict, set_seed
+from models.baseline_models import get_model
+from train_baseline import build_augmentation, predict, set_seed
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
