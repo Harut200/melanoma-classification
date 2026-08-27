@@ -1,17 +1,30 @@
 """
-Train the final multi-modal architecture: an ImageNet-pretrained vision
-backbone (convnext_tiny / efficientnet_b3 / any timm model) fused with the
-tabular metadata (age, sex, anatom_site_general_challenge).
+Train the final multi-modal architecture with a 2-stage fine-tuning recipe:
+
+  Stage 1 (epochs 1..freeze_epochs): the vision backbone is frozen (weights
+    AND batchnorm running stats -- see set_train_mode()). Only the tabular
+    embeddings + gated fusion + classifier head train, at a relatively high
+    LR (--lr_head, default 1e-3). This lets the newly-initialised head find
+    reasonable weights before it's allowed to push gradients back into the
+    pretrained backbone -- skipping this is what caused the earlier flat-LR
+    convnext_tiny run to spend its first several epochs with INCREASING train
+    loss instead of decreasing.
+
+  Stage 2 (epochs freeze_epochs+1..epochs): the backbone unfreezes. Backbone
+    and head now train with different LRs (--lr_backbone, default 1e-5, vs
+    --lr_head, default 1e-3) in the same optimizer, via param groups. A short
+    linear warmup ramps back up to full LR before cosine annealing takes over
+    for the rest of training, so unfreezing itself doesn't reintroduce the
+    same instability stage 1 was meant to avoid.
 
 Reads data/processed/metadata_clean.csv, which step2_make_folds.py already
 produced with the fold assignment, the cleaned sex/site categories, and the
 target all in one file -- no merge needed.
 
-    python src/train_final.py --epochs 15 --backbone convnext_tiny --loss focal
+    python src/train_final.py --backbone tf_efficientnet_b4_ns --epochs 15
 
-Model selection is on validation ROC-AUC, not PR-AUC like train_baseline.py.
-ROC-AUC is the actual competition metric, and it is what run_colab.py's
-Google Drive checkpointing also keys off of, so the two stay consistent.
+Model selection is on validation ROC-AUC -- the actual competition metric,
+and what run_colab.py's Google Drive checkpointing also keys off of.
 """
 
 import argparse
@@ -40,11 +53,14 @@ except ImportError:
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Must match SEX_CATEGORIES / SITE_CATEGORIES in step2_make_folds.py. Fixed
-# category counts (not "however many show up in this fold") so every fold and
-# every train/val split one-hot encodes to the exact same set of columns.
+# Must match SEX_CATEGORIES / SITE_CATEGORIES in step2_make_folds.py.
 NUM_SEX_CATEGORIES = 3   # female, male, unknown
 NUM_SITE_CATEGORIES = 7  # 6 body sites + unknown
+
+# The 3 raw metadata columns the model's embedding layer expects, in this
+# exact order -- see SkinMelanomaFinalModel.forward(), which reads
+# metadata[:, 0] as the sex index, [:, 1] as the site index, [:, 2] as age.
+META_COLS = ['sex_enc', 'site_enc', 'age_norm']
 
 
 def set_seed(seed):
@@ -55,44 +71,28 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def build_metadata_features(df):
+def select_metadata_columns(df):
     """
-    Expand the label-encoded sex_enc / site_enc columns from
-    step2_make_folds.py into one-hot vectors, and pair them with the already
-    normalised age_norm.
-
-    One-hot instead of the raw integer codes: site_enc=0..6 has no ordinal
-    meaning (site 3 is not "more" than site 1), and feeding a category id
-    straight into a linear layer tells the model there is one.
-
-    Returns (df_with_new_columns, meta_cols) where meta_cols is the ordered
-    list of column names to feed into the model -- callers pass
-    len(meta_cols) as num_meta_features.
+    Unlike the previous one-hot-encoded pipeline, the embedding-based
+    TabularEmbedding wants the RAW label-encoded sex_enc/site_enc columns
+    (0/1/2 and 0-6) plus age_norm -- nn.Embedding does its own lookup, so
+    one-hot expansion would just be throwing that structure away.
     """
-    df = df.reset_index(drop=True)
-
-    sex_oh = pd.get_dummies(
-        pd.Categorical(df['sex_enc'], categories=range(NUM_SEX_CATEGORIES)),
-        prefix='sex',
-    ).astype(np.float32)
-    site_oh = pd.get_dummies(
-        pd.Categorical(df['site_enc'], categories=range(NUM_SITE_CATEGORIES)),
-        prefix='site',
-    ).astype(np.float32)
-
-    df = pd.concat([df, sex_oh, site_oh], axis=1)
-    meta_cols = list(sex_oh.columns) + list(site_oh.columns) + ['age_norm']
-    return df, meta_cols
+    missing = [c for c in META_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(f"metadata csv is missing columns {missing}; expected {META_COLS}")
+    return df, list(META_COLS)
 
 
 def build_augmentation():
     """
     Training-only augmentation. Resize happens here too, since the final
     model is often trained at a different resolution than the 512px photos
-    step3_resize_images.py produced (224 for convnext_tiny/efficientnet_b3
-    by default). Normalisation is NOT here -- MelanomaDataset always does
-    that, so it can never be forgotten in one script and double-applied in
-    another.
+    step3_resize_images.py produced (224 for efficientnet_b4/convnext_tiny,
+    336 for eva02_tiny_patch14_336 -- pass --image_size to match whichever
+    backbone you pick). Normalisation is NOT here -- MelanomaDataset always
+    does that, so it can never be forgotten in one script and double-applied
+    in another.
     """
     import albumentations as A
 
@@ -116,24 +116,126 @@ def build_loss(args, train_df, device):
     return nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device, scaler, use_amp):
+# --------------------------------------------------------------------------
+# Mixup / CutMix
+#
+# Both mix a batch with a shuffled copy of itself (images + targets); the
+# metadata is deliberately left un-permuted, still paired with its original
+# sample's index. Mixing the images but keeping metadata index-aligned is
+# the same simplification used in the public write-ups of the actual
+# 2019/2020 ISIC-melanoma winning solutions that combined image + tabular
+# data -- properly mixing categorical metadata (sex, site) has no sensible
+# continuous interpolation the way pixels or a soft label do, so it's left
+# alone rather than mixed nonsensically.
+# --------------------------------------------------------------------------
+
+def mixup_data(images, targets, alpha):
+    lam = float(torch.distributions.Beta(alpha, alpha).sample())
+    perm = torch.randperm(images.size(0), device=images.device)
+    mixed = lam * images + (1 - lam) * images[perm]
+    return mixed, targets, targets[perm], lam
+
+
+def cutmix_data(images, targets, alpha):
+    lam = float(torch.distributions.Beta(alpha, alpha).sample())
+    perm = torch.randperm(images.size(0), device=images.device)
+    _, _, H, W = images.shape
+    cut_rat = (1.0 - lam) ** 0.5
+    cut_h, cut_w = int(H * cut_rat), int(W * cut_rat)
+    cy, cx = int(torch.randint(H, (1,))), int(torch.randint(W, (1,)))
+    y1, y2 = max(cy - cut_h // 2, 0), min(cy + cut_h // 2, H)
+    x1, x2 = max(cx - cut_w // 2, 0), min(cx + cut_w // 2, W)
+    mixed = images.clone()
+    mixed[:, :, y1:y2, x1:x2] = images[perm][:, :, y1:y2, x1:x2]
+    lam = 1.0 - ((y2 - y1) * (x2 - x1) / (H * W))  # actual pasted area, not the sampled lam
+    return mixed, targets, targets[perm], lam
+
+
+def maybe_mixup_cutmix(images, targets, mixup_alpha, cutmix_alpha, prob):
+    if prob <= 0 or torch.rand(1).item() > prob:
+        return images, targets, targets, 1.0
+    have_mixup, have_cutmix = mixup_alpha > 0, cutmix_alpha > 0
+    if not have_mixup and not have_cutmix:
+        return images, targets, targets, 1.0
+    use_cutmix = have_cutmix and (not have_mixup or torch.rand(1).item() < 0.5)
+    if use_cutmix:
+        return cutmix_data(images, targets, cutmix_alpha)
+    return mixup_data(images, targets, mixup_alpha)
+
+
+# --------------------------------------------------------------------------
+# 2-stage optimizer construction
+# --------------------------------------------------------------------------
+
+def set_train_mode(model, backbone_frozen):
+    """
+    model.train() puts EVERY submodule (including the backbone) into train
+    mode, which for a frozen backbone is wrong in a way that doesn't show up
+    as an error: BatchNorm layers update their running_mean/running_var from
+    the current minibatch in train mode regardless of requires_grad, so a
+    "frozen" backbone's normalisation statistics would keep drifting even
+    though its weights don't. Freezing has to mean model.backbone.eval() too.
+    """
     model.train()
+    if backbone_frozen:
+        model.backbone.eval()
+
+
+def build_stage1_optimizer(model, lr_head, weight_decay):
+    for p in model.backbone_parameters():
+        p.requires_grad_(False)
+    return torch.optim.AdamW(model.head_parameters(), lr=lr_head, weight_decay=weight_decay)
+
+
+def build_stage2_optimizer(model, lr_backbone, lr_head, weight_decay):
+    for p in model.backbone_parameters():
+        p.requires_grad_(True)
+    return torch.optim.AdamW([
+        {'params': model.backbone_parameters(), 'lr': lr_backbone},
+        {'params': model.head_parameters(), 'lr': lr_head},
+    ], weight_decay=weight_decay)
+
+
+def build_stage2_scheduler(optimizer, warmup_epochs, stage2_epochs):
+    """Linear warmup for `warmup_epochs`, then cosine decay for the rest of
+    stage 2. Guards against warmup_epochs >= stage2_epochs (cosine would get
+    T_max=0)."""
+    warmup_epochs = min(warmup_epochs, max(stage2_epochs - 1, 0))
+    if warmup_epochs <= 0:
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(stage2_epochs, 1))
+    return torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[
+            torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=warmup_epochs),
+            torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=stage2_epochs - warmup_epochs),
+        ],
+        milestones=[warmup_epochs],
+    )
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device, scaler, use_amp,
+                    backbone_frozen=False, mixup_alpha=0.0, cutmix_alpha=0.0, mixup_prob=0.0):
+    set_train_mode(model, backbone_frozen)
     running_loss = 0.0
     for images, metadata, targets in dataloader:
         images = images.to(device, non_blocking=True)
         metadata = metadata.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True).unsqueeze(1)
 
+        images, targets_a, targets_b, lam = maybe_mixup_cutmix(
+            images, targets, mixup_alpha, cutmix_alpha, mixup_prob)
+
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast(device.type, enabled=use_amp):
             logits = model(images, metadata)
-            loss = criterion(logits, targets)
+            loss = lam * criterion(logits, targets_a) + (1 - lam) * criterion(logits, targets_b)
 
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
         # Focal loss's gradient can spike on the rare hard positives early in
         # training; clipping keeps one bad batch from blowing up the weights.
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+        torch.nn.utils.clip_grad_norm_(
+            [p for p in model.parameters() if p.requires_grad], max_norm=5.0)
         scaler.step(optimizer)
         scaler.update()
 
@@ -172,25 +274,46 @@ def build_arg_parser():
                         default=os.path.join(BASE_DIR, 'data', 'processed', 'train_512'))
     parser.add_argument('--out_dir', type=str, default=os.path.join(BASE_DIR, 'models'))
 
-    parser.add_argument('--backbone', type=str, default='convnext_tiny',
-                        help="any timm model name, e.g. convnext_tiny, efficientnet_b3")
+    parser.add_argument('--backbone', type=str, default='tf_efficientnet_b4_ns',
+                        help="any timm model name. tf_efficientnet_b4_ns (default) is the "
+                             "practical middle ground for a single T4 GPU; "
+                             "swin_base_patch4_window7_224 is heavier/slower; "
+                             "eva02_tiny_patch14_336 needs --image_size 336 to match its "
+                             "pretrained patch grid.")
     parser.add_argument('--proj_dim', type=int, default=256)
     parser.add_argument('--drop_rate', type=float, default=0.3)
     parser.add_argument('--meta_dropout', type=float, default=0.3)
-    parser.add_argument('--no_residual', action='store_true',
-                        help="disable the image-projection residual connection in the fusion head")
+    parser.add_argument('--no_gem', action='store_true',
+                        help="use the backbone's own average pooling instead of GeM pooling")
+    parser.add_argument('--gem_p', type=float, default=3.0)
+    parser.add_argument('--no_metadata', action='store_true',
+                        help="image-only ablation: skip the tabular branch entirely")
 
     parser.add_argument('--loss', type=str, default='focal', choices=['focal', 'bce'])
-    parser.add_argument('--focal_alpha', type=float, default=0.8)
+    parser.add_argument('--focal_alpha', type=float, default=0.25)
     parser.add_argument('--focal_gamma', type=float, default=2.0)
 
-    parser.add_argument('--epochs', type=int, default=15)
-    parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--lr', type=float, default=3e-4)
+    parser.add_argument('--epochs', type=int, default=15, help="TOTAL epochs, stage 1 + stage 2")
+    parser.add_argument('--freeze_epochs', type=int, default=3,
+                        help="stage 1 length: epochs with the backbone frozen")
+    parser.add_argument('--warmup_epochs', type=int, default=1,
+                        help="linear LR warmup at the start of stage 2 (post-unfreeze)")
+    parser.add_argument('--lr_head', type=float, default=1e-3,
+                        help="LR for everything except the backbone, both stages")
+    parser.add_argument('--lr_backbone', type=float, default=1e-5,
+                        help="LR for the backbone once stage 2 unfreezes it")
     parser.add_argument('--weight_decay', type=float, default=1e-4)
+    parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--image_size', type=int, default=224)
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--seed', type=int, default=42)
+
+    parser.add_argument('--mixup_alpha', type=float, default=0.2,
+                        help="Beta(alpha, alpha) mixup strength; 0 disables mixup")
+    parser.add_argument('--cutmix_alpha', type=float, default=1.0,
+                        help="Beta(alpha, alpha) cutmix strength; 0 disables cutmix")
+    parser.add_argument('--mixup_prob', type=float, default=0.5,
+                        help="probability a given training batch gets mixup OR cutmix applied")
 
     # Two different folds, same discipline as train_baseline.py: val picks the
     # best epoch, test is never looked at during training.
@@ -205,12 +328,19 @@ def main(args=None):
     parser = build_arg_parser()
     args = parser.parse_args(args)
 
+    if args.freeze_epochs >= args.epochs:
+        raise ValueError(f"--freeze_epochs ({args.freeze_epochs}) must be < --epochs ({args.epochs}); "
+                         "stage 2 needs at least 1 epoch.")
+
     set_seed(args.seed)
 
     device = torch.device('cuda' if torch.cuda.is_available()
                           else 'mps' if torch.backends.mps.is_available()
                           else 'cpu')
     print(f"--- Training final model ({args.backbone}) on {device} ---")
+    print(f"  stage 1 (backbone frozen): epochs 1-{args.freeze_epochs}, lr_head={args.lr_head}")
+    print(f"  stage 2 (fine-tune all):   epochs {args.freeze_epochs + 1}-{args.epochs}, "
+          f"lr_backbone={args.lr_backbone}, lr_head={args.lr_head}, warmup={args.warmup_epochs}")
 
     if args.val_fold == args.test_fold:
         raise ValueError(
@@ -224,7 +354,8 @@ def main(args=None):
             "(src/step2_make_folds.py)."
         )
     df = pd.read_csv(args.metadata_csv)
-    df, meta_cols = build_metadata_features(df)
+    df, meta_cols = select_metadata_columns(df)
+    use_metadata = not args.no_metadata
 
     if args.no_external:
         df = df[df['is_external'] == 0]
@@ -241,11 +372,15 @@ def main(args=None):
     print(f"  train: {len(train_df)} photos, {n_pos} melanoma ({n_pos / len(train_df) * 100:.2f}%)")
     print(f"  val:   {len(valid_df)} photos, {int(valid_df['target'].sum())} melanoma "
           f"({valid_df['target'].mean() * 100:.2f}%)  [fold {args.val_fold}]")
-    print(f"  test:  fold {args.test_fold}, held out, not used by this script")
-    print(f"  metadata features ({len(meta_cols)}): {meta_cols}")
+    print(f"  metadata columns: {meta_cols if use_metadata else '(disabled, image-only)'}")
 
     check_images_exist(train_df, args.img_dir)
 
+    # meta_cols is always passed, even for the image-only ablation: the
+    # dataset's (image, metadata, target) 3-tuple shape has to stay constant
+    # regardless of --no_metadata, since train_one_epoch/validate always
+    # unpack 3 values. It's the MODEL (use_metadata=False -> meta_embed=None)
+    # that decides to ignore the tensor, not the dataset.
     train_dataset = MelanomaDataset(train_df, args.img_dir, image_size=args.image_size,
                                     transform=build_augmentation(), meta_cols=meta_cols)
     valid_dataset = MelanomaDataset(valid_df, args.img_dir, image_size=args.image_size,
@@ -261,17 +396,17 @@ def main(args=None):
 
     model = SkinMelanomaFinalModel(
         backbone_name=args.backbone,
-        num_meta_features=len(meta_cols),
         drop_rate=args.drop_rate,
         meta_dropout=args.meta_dropout,
         proj_dim=args.proj_dim,
-        use_residual=not args.no_residual,
+        use_gem=not args.no_gem,
+        gem_p=args.gem_p,
+        num_sex=NUM_SEX_CATEGORIES,
+        num_site=NUM_SITE_CATEGORIES,
+        use_metadata=use_metadata,
     ).to(device)
 
     criterion = build_loss(args, train_df, device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-
     use_amp = device.type == 'cuda'
     scaler = torch.amp.GradScaler(device.type, enabled=use_amp)
 
@@ -281,29 +416,26 @@ def main(args=None):
     best_auc = -1.0
     best_epoch = 0
 
-    for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, scaler, use_amp)
+    def run_validation_and_maybe_save(epoch):
+        nonlocal best_auc, best_epoch
         val_loss, val_metrics, val_targets, val_probs = validate(model, valid_loader, criterion, device)
-        scheduler.step()
-
-        print(f"Epoch {epoch}/{args.epochs} | Train Loss: {train_loss:.4f} | "
-              f"Val Loss: {val_loss:.4f} | Val ROC-AUC: {val_metrics['roc_auc']:.4f} | "
-              f"Val PR-AUC: {val_metrics['pr_auc']:.4f}")
-
+        print(f"Epoch {epoch}/{args.epochs} | Val Loss: {val_loss:.4f} | "
+              f"Val ROC-AUC: {val_metrics['roc_auc']:.4f} | Val PR-AUC: {val_metrics['pr_auc']:.4f}")
         if val_metrics['roc_auc'] >= best_auc:
             best_auc = val_metrics['roc_auc']
             best_epoch = epoch
             torch.save(model.state_dict(), weights_path)
-
             threshold, f1_at_threshold = find_best_threshold(val_targets, val_probs)
             with open(weights_path.replace('.pth', '_info.json'), 'w') as handle:
                 json.dump({
                     'backbone': args.backbone,
-                    'meta_cols': meta_cols,
+                    'meta_cols': meta_cols if use_metadata else None,
+                    'use_gem': not args.no_gem,
+                    'gem_p': args.gem_p,
                     'proj_dim': args.proj_dim,
-                    'drop_rate': args.drop_rate,
-                    'meta_dropout': args.meta_dropout,
-                    'use_residual': not args.no_residual,
+                    'freeze_epochs': args.freeze_epochs,
+                    'lr_head': args.lr_head,
+                    'lr_backbone': args.lr_backbone,
                     'image_size': args.image_size,
                     'loss': args.loss,
                     'val_fold': args.val_fold,
@@ -317,6 +449,33 @@ def main(args=None):
                     'seed': args.seed,
                 }, handle, indent=2)
             print(f"  --> saved best checkpoint (Val ROC-AUC {best_auc:.4f})")
+
+    # --- Stage 1: backbone frozen, head-only warmup ---
+    if args.freeze_epochs > 0:
+        optimizer = build_stage1_optimizer(model, args.lr_head, args.weight_decay)
+        for epoch in range(1, args.freeze_epochs + 1):
+            train_loss = train_one_epoch(
+                model, train_loader, criterion, optimizer, device, scaler, use_amp,
+                backbone_frozen=True, mixup_alpha=args.mixup_alpha,
+                cutmix_alpha=args.cutmix_alpha, mixup_prob=args.mixup_prob)
+            print(f"Epoch {epoch}/{args.epochs} | Train Loss: {train_loss:.4f} [stage 1, backbone frozen]")
+            run_validation_and_maybe_save(epoch)
+
+    # --- Stage 2: unfreeze, differential LR, warmup + cosine ---
+    stage2_epochs = args.epochs - args.freeze_epochs
+    optimizer = build_stage2_optimizer(model, args.lr_backbone, args.lr_head, args.weight_decay)
+    scheduler = build_stage2_scheduler(optimizer, args.warmup_epochs, stage2_epochs)
+
+    for offset in range(stage2_epochs):
+        epoch = args.freeze_epochs + offset + 1
+        train_loss = train_one_epoch(
+            model, train_loader, criterion, optimizer, device, scaler, use_amp,
+            backbone_frozen=False, mixup_alpha=args.mixup_alpha,
+            cutmix_alpha=args.cutmix_alpha, mixup_prob=args.mixup_prob)
+        scheduler.step()
+        print(f"Epoch {epoch}/{args.epochs} | Train Loss: {train_loss:.4f} [stage 2, "
+              f"lr_backbone={optimizer.param_groups[0]['lr']:.2e}]")
+        run_validation_and_maybe_save(epoch)
 
     print(f"\n--- Best Val ROC-AUC: {best_auc:.4f} at epoch {best_epoch} ---")
     print(f"Saved: {weights_path}")

@@ -13,11 +13,15 @@ class BinaryFocalLoss(nn.Module):
     rare, hard positives dominate the gradient instead, and `alpha` gives a
     second, independent knob to upweight the positive class on top of that.
 
-    alpha=0.8 means positives are weighted more heavily than negatives
-    (alpha for y=1, (1 - alpha) for y=0) -- tune it down if the model starts
-    over-predicting melanoma.
+    alpha weights the positive class (alpha for y=1, 1-alpha for y=0).
+    Default 0.25 matches the original paper's RetinaNet recipe: counter-
+    intuitively, giving the RARE class the LOWER alpha works best paired with
+    gamma=2, because the (1-p_t)**gamma focusing term is already doing most
+    of the work of amplifying hard/rare examples -- stacking a large alpha
+    on top of that over-corrects. Raise alpha toward 0.8-0.9 only if the
+    model is still under-predicting melanoma after tuning gamma first.
     """
-    def __init__(self, alpha=0.8, gamma=2.0, reduction='mean'):
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
