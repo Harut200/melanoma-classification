@@ -23,17 +23,44 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
+# Import order covers the three layouts this runs in: the repo (src.*), a
+# package rebuilt on Kaggle (models.*), and Kaggle's flattened upload where
+# every file sits side by side. Kaggle's uploader drops subdirectories, so the
+# flat form is the one that actually happens there.
+def _imports():
+    try:
+        from src.dataset import MelanomaDataset, check_images_exist
+        from src.metrics import evaluate_predictions, find_best_threshold, recall_at_specificity
+        from src.models.final_model import SkinMelanomaFinalModel
+        from src.losses.focal_loss import BinaryFocalLoss
+        return (MelanomaDataset, check_images_exist, evaluate_predictions,
+                find_best_threshold, recall_at_specificity, SkinMelanomaFinalModel,
+                BinaryFocalLoss)
+    except ImportError:
+        pass
+    from dataset import MelanomaDataset, check_images_exist
+    from metrics import evaluate_predictions, find_best_threshold, recall_at_specificity
+    try:
+        from models.final_model import SkinMelanomaFinalModel
+    except (ImportError, ModuleNotFoundError):
+        from final_model import SkinMelanomaFinalModel
+    try:
+        from losses.focal_loss import BinaryFocalLoss
+    except (ImportError, ModuleNotFoundError):
+        from focal_loss import BinaryFocalLoss
+    return (MelanomaDataset, check_images_exist, evaluate_predictions,
+            find_best_threshold, recall_at_specificity, SkinMelanomaFinalModel,
+            BinaryFocalLoss)
+
+
+(MelanomaDataset, check_images_exist, evaluate_predictions, find_best_threshold,
+ recall_at_specificity, SkinMelanomaFinalModel, BinaryFocalLoss) = _imports()
+
 try:
-    from src.dataset import MelanomaDataset, check_images_exist
-    from src.metrics import evaluate_predictions, find_best_threshold, recall_at_specificity
-    from src.models.final_model import SkinMelanomaFinalModel
     from src.train_final import (META_COLS, build_augmentation, build_loss,
                                  build_stage1_optimizer, build_stage2_optimizer,
                                  build_stage2_scheduler, set_seed, train_one_epoch)
 except ImportError:
-    from dataset import MelanomaDataset, check_images_exist
-    from metrics import evaluate_predictions, find_best_threshold, recall_at_specificity
-    from models.final_model import SkinMelanomaFinalModel
     from train_final import (META_COLS, build_augmentation, build_loss,
                              build_stage1_optimizer, build_stage2_optimizer,
                              build_stage2_scheduler, set_seed, train_one_epoch)

@@ -23,18 +23,24 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+# Import order covers the repo layout, a rebuilt package, and Kaggle's
+# flattened upload where every file sits side by side.
 try:
     from src.dataset import MelanomaDataset, check_images_exist
     from src.models.final_model import SkinMelanomaFinalModel
     from src.losses.focal_loss import BinaryFocalLoss
     from src.metrics import evaluate_predictions, find_best_threshold
 except ImportError:
-    # Falls back here when run as `python src/train_final.py`, which puts
-    # this file's own directory (src/) on sys.path instead of the repo root.
     from dataset import MelanomaDataset, check_images_exist
-    from models.final_model import SkinMelanomaFinalModel
-    from losses.focal_loss import BinaryFocalLoss
     from metrics import evaluate_predictions, find_best_threshold
+    try:
+        from models.final_model import SkinMelanomaFinalModel
+    except (ImportError, ModuleNotFoundError):
+        from final_model import SkinMelanomaFinalModel
+    try:
+        from losses.focal_loss import BinaryFocalLoss
+    except (ImportError, ModuleNotFoundError):
+        from focal_loss import BinaryFocalLoss
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

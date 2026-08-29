@@ -12,10 +12,16 @@ import time
 
 import torch
 
+# Import order covers the three layouts this runs in: the repo (src.models),
+# a package rebuilt on Kaggle (models), and Kaggle's flattened upload where
+# every file sits side by side (final_model).
 try:
     from src.models.final_model import SkinMelanomaFinalModel
 except ImportError:
-    from models.final_model import SkinMelanomaFinalModel
+    try:
+        from models.final_model import SkinMelanomaFinalModel
+    except (ImportError, ModuleNotFoundError):
+        from final_model import SkinMelanomaFinalModel
 
 # Candidates worth considering, cheapest first. Each is (backbone, image_size).
 CANDIDATES = [
