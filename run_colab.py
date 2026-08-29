@@ -1,29 +1,16 @@
 """
-Standalone entry point for training the final multi-modal model in Google
-Colab (or any single-script environment where cloning the repo and running
-`python -m src.train_final` isn't convenient).
-
-Typical Colab usage:
-
-    from google.colab import drive
-    drive.mount('/content/drive')
+Colab/Kaggle entry point for training the final model. Wraps
+src/train_final.py and checkpoints the best model to Google Drive (or any
+--checkpoint_path) so a dropped runtime doesn't lose the run.
 
     !python run_colab.py \\
-        --img_dir /content/drive/MyDrive/melanoma/train_512 \\
-        --csv_path /content/drive/MyDrive/melanoma/metadata_clean.csv \\
+        --img_dir <train_512> --csv_path <metadata_clean.csv> \\
         --backbone tf_efficientnet_b4_ns --epochs 15 --freeze_epochs 3
-
-This script is a thin wrapper around src/train_final.py: it reuses that
-module's dataset/model/loss/2-stage-training building blocks so there is
-exactly one place that defines how the final model is trained, and adds the
-one thing that is genuinely Colab-specific -- checkpointing the best-so-far
-weights straight to Google Drive so a disconnected runtime doesn't lose the
-run.
 """
 
 import sys
 
-sys.path.append('.')  # repo root, so `from src...` works regardless of cwd
+sys.path.append('.')  # so `from src...` works regardless of cwd
 
 import argparse
 import json
@@ -60,19 +47,11 @@ def parse_args():
     parser.add_argument('--img_dir', type=str, required=True,
                         help="folder of resized training jpgs")
     parser.add_argument('--csv_path', type=str, default='./folds.csv',
-                        help="CSV with the fold assignment, sex/site encoding, and target. "
-                             "Despite the default filename, this needs to be "
-                             "metadata_clean.csv from src/step2_make_folds.py -- the plain "
-                             "folds.csv it also writes only has "
-                             "image_name/patient_id/target/fold/is_external, no metadata "
-                             "columns, and will fail the check below. Point this at your "
-                             "actual metadata_clean.csv (or a copy/symlink named folds.csv).")
+                        help="metadata_clean.csv from step2_make_folds.py (needs the "
+                             "sex/site/age columns, not the plain folds.csv)")
 
     parser.add_argument('--backbone', type=str, default='tf_efficientnet_b4_ns',
-                        help="any timm model name. tf_efficientnet_b4_ns (default) is the "
-                             "practical choice for a single Colab T4; "
-                             "swin_base_patch4_window7_224 is heavier/slower; "
-                             "eva02_tiny_patch14_336 needs --image_size 336.")
+                        help="any timm model name")
     parser.add_argument('--proj_dim', type=int, default=256)
     parser.add_argument('--drop_rate', type=float, default=0.3)
     parser.add_argument('--meta_dropout', type=float, default=0.3)
@@ -180,9 +159,8 @@ def main():
 
     check_images_exist(train_df, args.img_dir)
 
-    # meta_cols is always passed, even for the image-only ablation: see the
-    # matching comment in src/train_final.py -- the dataset's 3-tuple shape
-    # must stay constant; the MODEL is what ignores metadata when disabled.
+    # Always pass meta_cols so the dataset keeps its 3-tuple shape; the model
+    # ignores the metadata tensor when use_metadata=False.
     train_dataset = MelanomaDataset(train_df, args.img_dir, image_size=args.image_size,
                                     transform=build_augmentation(), meta_cols=meta_cols)
     valid_dataset = MelanomaDataset(valid_df, args.img_dir, image_size=args.image_size,
@@ -217,9 +195,7 @@ def main():
         val_loss, val_metrics, val_targets, val_probs = validate(model, valid_loader, criterion, device)
         print(f"Epoch {epoch}/{args.epochs} | Val Loss: {val_loss:.4f} | "
               f"Val ROC-AUC: {val_metrics['roc_auc']:.4f}")
-        # Checkpoint to Drive on every Val ROC-AUC improvement, so a runtime
-        # that disconnects mid-run has already saved the best weights seen so
-        # far -- not just whatever the last completed epoch happened to be.
+        # Save on every ROC-AUC improvement so a dropped runtime keeps the best.
         if val_metrics['roc_auc'] >= best_auc:
             best_auc = val_metrics['roc_auc']
             torch.save(model.state_dict(), args.checkpoint_path)

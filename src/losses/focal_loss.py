@@ -3,23 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class BinaryFocalLoss(nn.Module):
-    """
-    Binary Focal Loss (Lin et al., 2017) for the severe class imbalance in
-    melanoma detection (~1.76% positive rate).
+    """Binary Focal Loss (Lin et al., 2017) for the class imbalance.
 
-    BCE spends most of its gradient on the easy negatives it already
-    classifies correctly, simply because there are 55x more of them. Focal
-    loss down-weights well-classified examples by (1 - p_t) ** gamma so the
-    rare, hard positives dominate the gradient instead, and `alpha` gives a
-    second, independent knob to upweight the positive class on top of that.
-
-    alpha weights the positive class (alpha for y=1, 1-alpha for y=0).
-    Default 0.25 matches the original paper's RetinaNet recipe: counter-
-    intuitively, giving the RARE class the LOWER alpha works best paired with
-    gamma=2, because the (1-p_t)**gamma focusing term is already doing most
-    of the work of amplifying hard/rare examples -- stacking a large alpha
-    on top of that over-corrects. Raise alpha toward 0.8-0.9 only if the
-    model is still under-predicting melanoma after tuning gamma first.
+    (1 - p_t)**gamma down-weights easy examples; alpha weights the positive
+    class. Defaults (0.25, 2.0) follow the RetinaNet paper.
     """
     def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
         super().__init__()

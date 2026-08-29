@@ -5,24 +5,8 @@ import timm
 
 
 class GeM(nn.Module):
-    """
-    Generalized Mean Pooling (Radenovic et al., 2018). A learnable
-    interpolation between average pooling (p=1) and max pooling (p -> inf):
-
-        gem(x) = ( mean(x.clamp(min=eps) ** p) ) ** (1/p)
-
-    Melanoma is diagnosed from a few salient structures (irregular borders,
-    colour variation, a specific pigment network) sitting inside a lesion
-    that is otherwise fairly uniform skin. Plain average pooling blends that
-    small salient region in with everything else in the feature map; GeM's
-    learnable `p` lets the network anneal toward emphasising the peak
-    activations (the salient structure) instead, without hand-picking max
-    vs. average up front.
-
-    `p` is a learned scalar, initialised at 3.0 (a common default that starts
-    partway between mean and max) via nn.Parameter, so it is optimised by the
-    same optimiser as everything else.
-    """
+    """Generalized Mean Pooling (Radenovic et al., 2018) with a learnable p.
+    p=1 is average pooling, p->inf is max pooling; init at 3.0."""
 
     def __init__(self, p=3.0, eps=1e-6):
         super().__init__()
@@ -30,70 +14,36 @@ class GeM(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        # x: (B, C, H, W), channels-first.
         x = x.clamp(min=self.eps).pow(self.p)
         x = F.adaptive_avg_pool2d(x, 1)
         return x.pow(1.0 / self.p).flatten(1)
 
 
 def pool_backbone_features(feats, num_features, gem):
-    """
-    Reduces a timm backbone's raw (unpooled) output to a (B, num_features)
-    vector with GeM pooling, regardless of which of the three output layouts
-    that backbone uses -- this matters because they are NOT interchangeable:
-
-      - CNNs (efficientnet, convnext, resnet...): (B, C, H, W), channels-first.
-        GeM applies directly.
-      - Some transformer backbones (swin...): (B, H, W, C), channels-LAST.
-        Applying GeM without permuting first would pool over the wrong axes
-        and silently produce garbage -- there is no error, just a model that
-        trains poorly for a reason that never shows up in a shape check.
-      - Pure ViT-style backbones (eva02...): (B, N, C), a flat token sequence
-        with no 2D spatial structure at all (patch tokens + a class token).
-        GeM has nothing to pool over spatially here, so we mean-pool over the
-        token dimension instead as the sane fallback.
-
-    Detecting channels-first vs. channels-last is done by checking which
-    dimension actually equals num_features, rather than assuming a layout by
-    architecture family, so this keeps working for backbones not in this
-    docstring.
-    """
+    """GeM-pool a timm backbone's unpooled output, handling the three layouts
+    timm returns: (B,C,H,W) CNNs, (B,H,W,C) swin, (B,N,C) ViT token sequences."""
     if feats.dim() == 4:
         if feats.shape[1] == num_features:
-            pass  # already channels-first: (B, C, H, W)
+            pass
         elif feats.shape[-1] == num_features:
-            feats = feats.permute(0, 3, 1, 2).contiguous()  # -> (B, C, H, W)
+            feats = feats.permute(0, 3, 1, 2).contiguous()  # channels-last -> channels-first
         else:
             raise ValueError(
-                f"Backbone output shape {tuple(feats.shape)} doesn't match "
-                f"num_features={num_features} on either the channel-first or "
-                "channel-last axis; this backbone's output layout needs its "
-                "own case in pool_backbone_features()."
+                f"Backbone output {tuple(feats.shape)} doesn't match num_features={num_features}"
             )
         return gem(feats)
 
     if feats.dim() == 3:
-        # Token sequence (ViT-style): mean over the token axis, class token
-        # included. No spatial grid to run GeM over.
-        return feats.mean(dim=1)
+        return feats.mean(dim=1)  # token sequence: no spatial grid, mean over tokens
 
-    # Already pooled to (B, num_features) by the backbone itself.
     return feats
 
 
 class TabularEmbedding(nn.Module):
-    """
-    Embeds the categorical metadata instead of one-hot + linear. Entity
-    embeddings generally beat one-hot for low-cardinality categoricals
-    because the network can place similar categories near each other in
-    embedding space -- e.g. "palms/soles" and "oral/genital" can end up nearer
-    each other than either is to "torso" if that's what the data supports --
-    instead of one-hot's built-in assumption that every category is equally
-    (maximally) different from every other one.
+    """Entity embeddings for sex/site + a small MLP for age.
 
-    sex_idx and site_idx are the raw label-encoded columns from
-    step2_make_folds.py (sex_enc: 0/1/2, site_enc: 0-6), not one-hot vectors.
-    age is the already-normalised age_norm column (age / 90).
+    sex_idx/site_idx are the raw label codes from step2_make_folds (sex 0-2,
+    site 0-6); age is the normalised age_norm column.
     """
 
     def __init__(self, num_sex=3, num_site=7, sex_dim=8, site_dim=8,
@@ -122,25 +72,11 @@ class TabularEmbedding(nn.Module):
 
 
 class GatedFusion(nn.Module):
-    """
-    Gated multimodal fusion, replacing plain concatenation.
+    """fused = img_feats + gate(meta) * project(meta).
 
-    A gate in (0, 1), predicted from the metadata embedding, scales an
-    additive metadata contribution before it's added onto the image features:
-
-        fused = img_feats + gate(meta) * project(meta)
-
-    This deliberately is NOT `img_feats * gate` (a literal 0-1 scaling gate
-    multiplying the image features themselves). A multiplicative gate that
-    can hit exactly 0 lets a single noisy metadata row -- a missing age, a
-    rare anatomical site -- silence the image branch completely, which is the
-    opposite of "tabular data cannot overpower the visual signal": it would
-    let bad tabular data erase good visual data. With the additive-residual
-    form here, the image features are always fully present unchanged; the
-    gate only controls how much (from none, at gate=0, up to the full
-    projected embedding, at gate=1) metadata gets ADDED on top. Worst case
-    for noisy metadata is "contributes nothing", never "destroys the image
-    signal".
+    The gate scales an additive metadata contribution rather than multiplying
+    the image features, so noisy metadata can only add nothing (gate->0), never
+    zero out the image branch.
     """
 
     def __init__(self, feat_dim, meta_dim, dropout=0.3):
@@ -163,17 +99,11 @@ class GatedFusion(nn.Module):
 
 
 class SkinMelanomaFinalModel(nn.Module):
-    """
-    Multi-modal final architecture for SIIM-ISIC melanoma classification.
+    """Vision backbone (GeM-pooled) fused with tabular metadata via a gated
+    residual, for SIIM-ISIC melanoma classification.
 
-    Vision backbone (any timm model; efficientnet_b4/convnext/swin all work,
-    see pool_backbone_features) -> GeM pooling -> projected to `proj_dim`.
-    Metadata (sex, anatom_site, age) -> entity embeddings -> gated fusion onto
-    the image features -> LayerNorm -> classifier.
-
-    `use_gem=False` falls back to the backbone's own built-in average
-    pooling, kept for backbones where GeM either doesn't apply cleanly or
-    isn't worth the extra parameter (e.g. quick ablations).
+    use_metadata=False runs image-only; use_gem=False falls back to the
+    backbone's own average pooling.
     """
 
     def __init__(
@@ -226,9 +156,7 @@ class SkinMelanomaFinalModel(nn.Module):
         return self.backbone.parameters()
 
     def head_parameters(self):
-        """Everything that isn't the backbone -- image_proj, meta_embed,
-        fusion, fusion_norm, classifier, and gem's learned p. Used to build
-        the differential-LR optimiser param groups in train_final.py."""
+        """Everything except the backbone, for the differential-LR param groups."""
         backbone_ids = {id(p) for p in self.backbone.parameters()}
         return [p for p in self.parameters() if id(p) not in backbone_ids]
 
@@ -255,6 +183,4 @@ class SkinMelanomaFinalModel(nn.Module):
 
 
 def build_final_model(backbone_name='tf_efficientnet_b4_ns', **kwargs):
-    """Small factory so callers configure the model from a dict/argparse
-    namespace without importing the class directly."""
     return SkinMelanomaFinalModel(backbone_name=backbone_name, **kwargs)
