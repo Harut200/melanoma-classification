@@ -98,7 +98,17 @@ def predict(model, loader, device, tta=1):
         all_probs.extend(probs.squeeze(-1).cpu().numpy())
         all_targets.extend(targets.numpy())
 
-    return np.array(all_targets), np.array(all_probs)
+    probs = np.array(all_probs)
+    n_bad = int(np.isnan(probs).sum() + np.isinf(probs).sum())
+    if n_bad:
+        # Do not throw away hours of training over a few poisoned values. 0.5 is
+        # the neutral prediction, so these rows neither help nor hurt the
+        # ranking, and the count is reported so the fold can be judged.
+        print(f"    WARNING: {n_bad} of {len(probs)} predictions were NaN or inf, "
+              f"replaced with 0.5", flush=True)
+        probs = np.nan_to_num(probs, nan=0.5, posinf=1.0, neginf=0.0)
+
+    return np.array(all_targets), probs
 
 
 def run_fold(args, fold, device):

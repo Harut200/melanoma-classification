@@ -14,9 +14,15 @@ class GeM(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        x = x.clamp(min=self.eps).pow(self.p)
-        x = F.adaptive_avg_pool2d(x, 1)
-        return x.pow(1.0 / self.p).flatten(1)
+        # Force fp32. Under autocast this runs in fp16, and pow(p) with p around
+        # 3 overflows: any activation above about 40 cubed passes fp16's 65504
+        # ceiling, becomes inf, and pooling turns that into NaN. It can survive
+        # a dozen epochs and then poison a whole fold's predictions.
+        with torch.amp.autocast('cuda', enabled=False):
+            x = x.float()
+            x = x.clamp(min=self.eps).pow(self.p)
+            x = F.adaptive_avg_pool2d(x, 1)
+            return x.pow(1.0 / self.p).flatten(1)
 
 
 def pool_backbone_features(feats, num_features, gem):
