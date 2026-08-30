@@ -198,16 +198,23 @@ python predict.py --image path/to/lesion.jpg
   Image        ISIC_8306697.jpg
   Model        tf_efficientnet_b4 @300px, 5-fold ensemble, 4x flip TTA
 
-  Prediction:  MALIGNANT (melanoma) | Confidence: 99.7%
+  Prediction:  MALIGNANT (melanoma) | Confidence: 96.1%
 
-  Melanoma probability   0.9974
+  Melanoma probability   0.9610
   Decision threshold     0.6245
   Risk band              HIGH - refer urgently
-  Fold agreement         0.0141 spread across 5 models
-  Took                   1.91s
+  Fold agreement         0.0921 spread across 5 models
+  Took                   0.89s
 ```
 
-`ISIC_8306697` is a confirmed melanoma, and 0.9974 is its real out-of-fold probability from [reports/final_oof.csv](reports/final_oof.csv), scored by the one fold model that never trained on it. The threshold, timing and fold spread are from a live run of the command above.
+`ISIC_8306697` is a confirmed melanoma and the model calls it correctly. One caveat
+worth stating, because it is the sort of thing that should not be quietly skipped:
+this photo sits in fold 3, so four of those five fold models trained on it. Only the
+fold 3 model never saw it, and its honest out-of-fold probability for this image is
+**0.9974**, recorded in [reports/final_oof.csv](reports/final_oof.csv). Every headline
+number in the Results section above is out-of-fold and carries no such overlap; this
+one demo output does, and the ensemble is shown because it is what the script runs by
+default.
 
 The model also takes the patient's details, which is what the metadata branch is for. Anything you leave out becomes the `unknown` category, which it was trained to handle because a tenth of the real dataset is missing it too:
 
