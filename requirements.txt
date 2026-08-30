@@ -1,7 +1,7 @@
-# SIIM-ISIC Melanoma Classification — pinned dependencies
+# SIIM-ISIC Melanoma Classification, pinned dependencies
 #
-# Python 3.12 is required. TensorFlow publishes no wheels for 3.13 or 3.14,
-# so a newer interpreter will fail to resolve this file.
+# Python 3.12. The pins below were resolved together on it; nothing here needs
+# 3.12 specifically, but the versions are not re-tested on anything newer.
 #
 #   python3.12 -m venv .venv
 #   source .venv/bin/activate
@@ -28,12 +28,16 @@ pillow==12.3.0
 opencv-python-headless==5.0.0.93
 
 # --- modelling ---
-tensorflow==2.21.0
-# Apple Silicon GPU acceleration is optional and not pinned here, because
-# tensorflow-metal lags the TensorFlow release cycle. Add it only after
-# checking it supports the tensorflow version above:
-#   pip install tensorflow-metal
-
+# All modelling code is PyTorch. timm supplies the pretrained backbones
+# (resnet34 for the baseline, tf_efficientnet_b4 for the final model) and
+# albumentations does the augmentation.
+#
+# On a machine with an NVIDIA GPU, install torch from the CUDA index instead:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+torch==2.13.0
+torchvision==0.28.0
+timm==1.0.29
+albumentations==2.0.8
 # --- data download ---
 kaggle==2.2.4
 
