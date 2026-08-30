@@ -4,7 +4,10 @@ Summarise the final-model runs and score the fold ensemble.
     python src/final_report.py --in_dir /kaggle/working/reports
 
 Reads final_results.csv and final_oof.csv, prints per-fold and ensemble
-numbers, and writes final_report.md next to them.
+numbers, and writes final_model_report.md next to them.
+
+Not final_report.md: reports/Final_Report.md is the written-up version of this
+and macOS filesystems are case-insensitive, so that name would overwrite it.
 """
 
 import argparse
@@ -114,7 +117,7 @@ def main():
                      f"**{m['pr_auc'] - BASELINE['pr_auc']:+.4f}** |")
         lines.append("")
 
-    out = os.path.join(args.in_dir, 'final_report.md')
+    out = os.path.join(args.in_dir, 'final_model_report.md')
     with open(out, 'w') as fh:
         fh.write("\n".join(lines) + "\n")
     print("\n".join(lines))
