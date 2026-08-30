@@ -2,7 +2,7 @@
 
 ## The problem in one line
 
-Our 2020 competition data is **33,126 photos with 584 melanomas — 1.76%**. A model
+Our 2020 competition data is **33,126 photos with 584 melanomas, 1.76%**. A model
 that always guesses "not cancer" scores 98.24% accuracy and is worthless. There
 are not enough positive examples to learn from.
 
@@ -10,7 +10,7 @@ are not enough positive examples to learn from.
 
 Add the **ISIC 2019** challenge training set as extra *training* material. Same
 disease, same kind of dermoscopic photo, different year. It contributes **4,522
-melanoma photos** — roughly **8x** our current positive count.
+melanoma photos**, roughly **8x** our current positive count.
 
 | | photos | melanoma | melanoma rate |
 | --- | ---: | ---: | ---: |
@@ -19,7 +19,7 @@ melanoma photos** — roughly **8x** our current positive count.
 | **Combined training pool** | **58,457** | **5,106** | **8.73%** |
 
 1.76% → 8.73% is a 5x improvement in positive density. It does not make the
-problem balanced, and we still need class weights or focal loss on top — but it
+problem balanced, and we still need class weights or focal loss on top, but it
 gives the model far more melanoma to actually look at.
 
 ## What ISIC 2019 contains, exactly
@@ -101,7 +101,7 @@ data is **train-only**, enforced by `fold = -1`.
 
 The shortcut is the reason for the default. If *every* external photo is
 malignant, the model can learn "this looks like a 2019-era photo, therefore
-cancer" — 2019 photos have different colour balance and optics. That rule scores
+cancer". 2019 photos have different colour balance and optics. That rule scores
 brilliantly in training and collapses on the 2020 test set.
 
 Including all of 2019 puts 2019-looking photos in **both** classes, so source
@@ -142,7 +142,7 @@ leaves orphan resized files and dropped rows still sitting in the folds.
 
 ## How we will know it worked
 
-Not from the training loss — extra positives always improve that. The check is
+Not from the training loss. Extra positives always improve that. The check is
 **PR-AUC on a competition-only validation fold**, compared against the same fold
 trained without external data. Same fold, same seed, one variable changed.
 
@@ -152,8 +152,8 @@ along with the data.
 
 ## Later options, not now
 
-- **ISIC 2018 separately** — no, it is inside 2019 already.
-- **ISIC 2017 / 2016** — a few hundred melanomas each, much older equipment.
+- **ISIC 2018 separately**: no, it is inside 2019 already.
+- **ISIC 2017 / 2016**: a few hundred melanomas each, much older equipment.
   Poor value relative to the domain shift they introduce.
-- **Upsampling the positives we have** — cheap, no download, but adds no new
+- **Upsampling the positives we have**: cheap, no download, but adds no new
   information. Worth combining with external data, not instead of it.

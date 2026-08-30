@@ -14,24 +14,29 @@ a two stage fine tuning schedule, and flip test time augmentation.
 
 It works. ROC-AUC goes from 0.887 to 0.909, and it wins on all five folds.
 
+Out of fold, meaning every one of the 33,126 competition photos scored exactly
+once by the fold model that never trained on it. This is the number to quote:
+
 | | ROC-AUC | PR-AUC | Sens@95%Spec |
 | --- | ---: | ---: | ---: |
 | Random guessing | 0.500 | 0.0176 | 0.050 |
-| resnet34 @224, the baseline | 0.8873 | 0.2285 | 0.5189 |
-| **efficientnet-b4 @300 + metadata** | **0.9086** | **0.2530** | **0.5598** |
-| change | **+0.0213** | **+0.0245** | **+0.0409** |
+| resnet34 @224, no external | 0.879 | 0.170 | 0.462 |
+| resnet34 @224, the baseline | 0.886 | 0.216 | 0.522 |
+| **efficientnet-b4 @300 + metadata** | **0.9076** | **0.2507** | **0.5479** |
+| change against the baseline | **+0.0216** | **+0.0347** | **+0.0259** |
 
 In melanomas rather than decimals: at a fixed 5% false alarm rate the baseline
-finds 303 of the 584 cancers in the dataset and this model finds 327. Twenty four
-more, for the same number of false alarms.
+finds 305 of the 584 cancers and this model finds 320. Fifteen more, for the same
+number of false alarms. Against where the project started, without the external
+data, it is fifty more.
 
 It cost 11.6 GPU hours against the baseline's 1.9. That is 6.2x the compute for
 +0.021 ROC-AUC, which is the honest price of the last two points.
 
-Two things stop this being the final word, and both are written up below: we did
-not collect the out of fold predictions, so the number we most want to quote does
-not exist yet; and the epoch selection has a test time augmentation confound that
-makes the per fold numbers slightly inconsistent with each other.
+One thing stops this being the final word, and it is written up below: the epoch
+selection has a test time augmentation confound that makes the per fold numbers
+slightly inconsistent with each other. It does not affect the out of fold score,
+which is measured on predictions rather than on the selection rule.
 
 ## What the model actually is
 
@@ -80,7 +85,7 @@ refuses to run if an external row reaches a validation fold.
 | optimiser | AdamW, weight decay `1e-4`, gradient clipped at norm 5 |
 | loss | `BCEWithLogitsLoss`, `pos_weight` computed per split (≈9.41) |
 | batch size | 32, mixed precision |
-| augmentation | h/v flip, affine (±30°, ±5% shift, 0.9–1.1 scale), brightness/contrast jitter |
+| augmentation | h/v flip, affine (±30°, ±5% shift, 0.9 to 1.1 scale), brightness/contrast jitter |
 | mixup / cutmix | mixup α 0.4, cutmix α 1.0, applied to 50% of batches |
 | TTA | 4 views (identity, h-flip, v-flip, both), last 3 epochs only |
 | checkpoint selection | best validation ROC-AUC |
@@ -157,7 +162,7 @@ significant" for these would be misreading the test.
 **The strongest evidence here is the unanimity, not any p value.** Five folds,
 five positive ROC-AUC differences: under a null of no effect that is a 1 in 32
 outcome one sided, p = 0.031. PR-AUC gives the same 5/5 and sensitivity never goes
-backwards, but those are not independent tests — they are three views of the same
+backwards, but those are not independent tests. They are three views of the same
 five model pairs on the same five patient groups, so they cannot be multiplied
 together into a smaller number. One clean sign test on the competition metric, and
 two other metrics that agree with it, is the claim to defend.
@@ -165,17 +170,16 @@ two other metrics that agree with it, is the claim to defend.
 ### What it means in practice
 
 At 95% specificity, meaning we accept a 5% false alarm rate on benign lesions,
-summed across the five validation folds:
+measured on the pooled out of fold predictions:
 
-- the resnet34 baseline catches **303** of the 584 melanomas
-- this model catches **327**
+- without the external data, the model catches **270** of the 584 melanomas
+- the resnet34 baseline with ISIC 2019 catches **305**
+- this model catches **320**
 
-Twenty four more cancers found, no extra false alarms. Set against where the
-project started, the same arithmetic puts the no-external baseline at **273**, so
-the ISIC 2019 data bought 30 melanomas and the architecture bought another 24.
-(The experiment report quotes 270 and 305 for those two; those come from pooled
-out of fold predictions rather than a fold weighted sum of per fold sensitivities,
-which is the better estimator and the reason to go and fetch `final_oof.csv`.)
+Fifteen more cancers than the baseline, and fifty more than where the project
+started, for no extra false alarms. The ISIC 2019 data bought 35 of those and the
+architecture bought the other 15, which is worth knowing: the cheaper change was
+the bigger one.
 
 ## The test time augmentation confound
 
@@ -227,46 +231,73 @@ and pay for it, or select the checkpoint on plain single view predictions and
 apply TTA once, afterwards, to the chosen checkpoint. The second is cheaper and
 more correct.
 
+## Out of fold
+
+All 33,126 competition photos, each scored exactly once by the fold model that did
+not train on it. `reports/final_oof.csv`, summarised by `src/final_report.py`.
+
+| | photos | ROC-AUC | PR-AUC | Sens@95%Spec |
+| --- | ---: | ---: | ---: | ---: |
+| resnet34 @224, no external | 33,126 | 0.879 | 0.170 | 0.462 |
+| resnet34 @224, the baseline | 33,126 | 0.886 | 0.216 | 0.522 |
+| **efficientnet-b4 @300 + metadata** | 33,126 | **0.9076** | **0.2507** | **0.5479** |
+
+The out of fold ROC-AUC is 0.9076 against a per fold mean of 0.9086. The gap is
+small and in the expected direction: averaging five per fold numbers is slightly
+optimistic, because each fold's epoch was chosen partly on that fold's noise.
+Pooling removes some of that. Quote 0.9076.
+
+**The deployment threshold is 0.6245.** That is the F1 optimal cutoff on the pooled
+predictions. It replaces the per fold thresholds, which ran from 0.447 to 0.679 and
+none of which was usable on its own. `predict.py` uses this number.
+
+The file is also clean, which settles an open question. `predict()` replaces any
+NaN or inf prediction with a neutral 0.5 and prints a warning; `final_oof.csv`
+contains no NaN and not a single probability of exactly 0.5 across 33,126 rows. The
+fp16 GeM overflow did not touch this run.
+
+## Error analysis
+
+Where the model fails, from the same out of fold predictions.
+
+**It misses 264 of the 584 melanomas** at the 5% false alarm operating point. That
+is the headline failure and no amount of ROC-AUC hides it.
+
+**Twelve melanomas were scored below 0.01**, which is not a near miss but a
+confident wrong answer. The worst is `ISIC_5733748` at 0.00306, ranked below 5.3%
+of all 33,126 photos: the model placed a confirmed melanoma among the most
+obviously benign moles in the dataset. Three of the ten worst misses are in fold 0,
+which is also the fold with the smallest gain over the baseline.
+
+| image | probability | ranked below |
+| --- | ---: | ---: |
+| `ISIC_5733748` | 0.00306 | 5.3% of all photos |
+| `ISIC_5331102` | 0.00469 | 12.7% |
+| `ISIC_7948290` | 0.00518 | 15.1% |
+| `ISIC_3028754` | 0.00581 | 18.5% |
+
+**118 benign lesions were scored above 0.90.** The worst, `ISIC_4973831` at 0.996,
+the model is more confident about than almost any true melanoma. In a triage queue
+these are the cases that waste a specialist's time, and at 1.76% prevalence they
+outnumber the true positives at every high threshold.
+
+Pull those eight image names out of `data/processed/train_512` and look at them.
+That is the honest way to answer "why did it get confused", and it is the one thing
+this report cannot do for you, because the images are not in the repository.
+
 ## What is missing
-
-**The out of fold predictions were not kept.** `run_final_kaggle.py` writes
-`final_oof.csv` alongside `final_results.csv`, and it did not come back from
-Kaggle with the results. Three things are blocked without it:
-
-- the out of fold score, every one of the 33,126 competition photos scored exactly
-  once by a model that never trained on it. `src/final_report.py` calls this "the
-  number to quote" and it is right. Averaging five per fold numbers is not the
-  same thing and is slightly more optimistic.
-- a single deployment threshold. The per fold tuned thresholds run from 0.447 to
-  0.679, a spread of 0.232, which is far too wide to pick one from. The threshold
-  has to come from the pooled out of fold predictions.
-- the fold ensemble, and any rank averaged ensemble across future runs, which is
-  what `src/ensemble_oof.py` was written for. Historically this is worth more than
-  any single architecture change.
-
-Retrieving that file from the Kaggle working directory and running
-`python src/final_report.py --in_dir reports` finishes the analysis. It costs
-nothing; the models are already trained.
 
 **No held out test fold.** The run used `--test_fold -99`, meaning nothing was
 held back. Every fold's score is the best epoch measured on the same fold that
 selected it, which is normal practice for choosing a checkpoint but makes the
 number slightly optimistic. The baseline has exactly the same property, so the
 *comparison* between them is fair even though the absolute numbers are not clean.
-`src/evaluate_test.py` supports a genuinely untouched split and it has still not
-been run.
-
-**Whether the fp16 NaN bug touched this run.** GeM pooling with `p≈3` overflows
-fp16: any activation above roughly 40 cubed passes the 65504 ceiling, becomes
-`inf`, and pooling turns that into `NaN`. The fix that forces GeM into fp32 was
-committed on 30 August at 02:29 (`da453e3`), and this run takes about six wall
-clock hours per session. It is not clear from the results alone whether the run
-predates the fix. `predict()` prints `WARNING: N of M predictions were NaN or inf,
-replaced with 0.5` when it catches them, so the fold logs answer this directly.
-Worth checking, particularly for fold 0: it improved by only +0.0017 ROC-AUC, the
-smallest gain of the five, and predictions replaced with a neutral 0.5 would flatten
-the ranking in exactly that way. This is a hypothesis to check in the logs, not a
-finding.
+`src/evaluate_test.py` scores a genuinely untouched fold, and it cannot be run on
+this run's checkpoints: with `--test_fold -99` there is no fold that some
+checkpoint did not either train on or select on. It refuses every combination,
+correctly. Getting a clean number means either retraining four folds with
+`--test_fold 4`, about nine GPU hours, or submitting to the competition, where the
+10,982 test photos have labels nobody on this project has ever seen.
 
 ## Honest caveats
 
@@ -277,7 +308,7 @@ Treat any single fold difference under about 0.05 PR-AUC as noise unless it is
 consistent across folds, which is the whole reason the analysis above is paired.
 
 **The focal loss was built and not used.** `src/losses/focal_loss.py` exists,
-`train_final.py` defaults to it, and `run_final_kaggle.py` defaults to `bce` — so
+`train_final.py` defaults to it, and `run_final_kaggle.py` defaults to `bce`, so
 the run that produced these numbers used `BCEWithLogitsLoss` with a computed
 `pos_weight`. Focal loss versus weighted BCE on this imbalance is an untested
 one-line ablation.
@@ -306,29 +337,31 @@ and should be assumed worse.
 
 ## What to do next, in order
 
-1. **Get `final_oof.csv` off Kaggle and run `src/final_report.py`.** Free, and it
-   produces the out of fold number, the deployment threshold and the fold ensemble.
-   Nothing else on this list should happen first.
+1. **Look at the eight images named in the error analysis.** Free, and it is the
+   only item on this list that changes what we understand rather than what we
+   score. It is also the part of a presentation nobody can fake.
 2. **Fix the TTA selection line.** One line, and it makes the five folds
    comparable to each other.
-3. **Check the fold logs for the NaN warning.** Five minutes, and it either clears
-   fold 0 or explains it.
+3. **Submit to the competition.** The 2020 leaderboard still accepts late
+   submissions and scores against 10,982 photos whose labels nobody here has ever
+   had. About 40 minutes of T4 time, and it is the only genuinely held out number
+   this project can get without retraining.
 4. **Switch to `tf_efficientnet_b4.ns_jft_in1k`.** Same cost, probably better
-   weights.
+   weights. The `_ns` suffix the code still defaults to no longer resolves in timm.
 5. **Run the `--no_metadata` ablation on two folds.** Roughly 4.5 GPU hours, and it
-   answers whether the metadata branch earned its place — the part of this
+   answers whether the metadata branch earned its place, the part of this
    architecture that a reader will ask about first.
 6. **Train longer, but only if the curves say so.** 16 to 18 epochs is the obvious
    next step and it is about 3.5 extra GPU hours per fold. Decide it from the
    learning curves after step 2, not from the current best-epoch column.
 7. **Ensemble.** Different backbone, different resolution, rank average with
-   `src/ensemble_oof.py`. This is usually worth more than any of the above and it
-   is last only because it needs step 1 to be measurable.
+   `src/ensemble_oof.py`. Historically worth more than any single architecture
+   change, and `final_oof.csv` now exists to measure it against.
 
 ## Reproducing this
 
 On Kaggle, `kaggle/final_model_kaggle.ipynb`. Set the constants in cell 1 to what
-was actually run — the committed defaults say `tf_efficientnet_b3`:
+was actually run. The committed defaults say `tf_efficientnet_b3`:
 
 ```python
 FOLDS      = "0,1,2"    # and "3,4" in a second session

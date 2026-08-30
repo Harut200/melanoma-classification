@@ -17,7 +17,7 @@ The repository holds the whole pipeline: exploratory analysis in [notebooks/eda.
 | [Experiment_Report.md](reports/Experiment_Report.md) | the baseline, and the paired test of whether ISIC 2019 helps |
 | [Final_Report.md](reports/Final_Report.md) | the final architecture, its numbers, and what is still missing |
 
-Sections below marked TODO are the parts that are still missing, and they are marked rather than guessed at.
+The one thing still marked TODO below is genuinely unknown rather than unwritten.
 
 ## Dataset
 
@@ -68,7 +68,7 @@ The notebook reads these as `../data/raw/train.csv` and `../data/raw/jpeg/train`
 
 **Baseline.** ImageNet-pretrained ResNet34 at 224x224, 10 epochs, `BCEWithLogitsLoss` with `pos_weight` computed per split. [src/train_baseline.py](src/train_baseline.py). Scores ROC-AUC 0.887.
 
-**Final architecture.** [src/models/final_model.py](src/models/final_model.py). An EfficientNet-B4 at 300x300, GeM-pooled, with the patient's sex, age and body site fused into the image features through a gated residual, so noisy metadata can add nothing but can never wipe out the image branch. Trained in two stages — backbone frozen while the fresh head settles, then differential learning rates with warmup into cosine decay — with mixup, cutmix and flip test-time augmentation. Scores ROC-AUC 0.909. Full description in [reports/Final_Report.md](reports/Final_Report.md).
+**Final architecture.** [src/models/final_model.py](src/models/final_model.py). An EfficientNet-B4 at 300x300, GeM-pooled, with the patient's sex, age and body site fused into the image features through a gated residual, so noisy metadata can add nothing but can never wipe out the image branch. Trained in two stages (backbone frozen while the fresh head settles, then differential learning rates with warmup into cosine decay), with mixup, cutmix and flip test-time augmentation. Scores ROC-AUC 0.909. Full description in [reports/Final_Report.md](reports/Final_Report.md).
 
 **Why transfer learning.** 584 positive examples is not enough to learn edges, texture, and color from scratch. A pretrained backbone arrives already knowing those, so training only has to learn what separates a melanoma from a nevus. It also cuts training time to something four students can iterate on.
 
@@ -86,24 +86,30 @@ Stratification on `target` is still needed on top of the grouping. At 1.76% posi
 
 ## Results
 
-Five-fold cross-validation, folds grouped by `patient_id`, ISIC 2019 in training only. Every number is a mean over the five folds.
+Five-fold cross-validation, folds grouped by `patient_id`, ISIC 2019 in training only. Every number below is **out of fold**: all 33,126 competition photos, each scored exactly once by the fold model that did not train on it.
 
 | Model | ROC-AUC | PR-AUC | Sens @ 95% spec | Notes |
 |---|---|---|---|---|
 | Random guessing | 0.500 | 0.0176 | 0.050 | the floor at a 1.76% positive rate |
-| ResNet34 @224, no external | 0.8809 | 0.1873 | 0.4674 | competition data only |
-| ResNet34 @224, + ISIC 2019 | 0.8873 | 0.2285 | 0.5189 | the baseline |
-| **EfficientNet-B4 @300 + metadata** | **0.9086** | **0.2530** | **0.5598** | the final model |
+| ResNet34 @224, no external | 0.879 | 0.170 | 0.462 | competition data only |
+| ResNet34 @224, + ISIC 2019 | 0.886 | 0.216 | 0.522 | the baseline |
+| **EfficientNet-B4 @300 + metadata** | **0.9076** | **0.2507** | **0.5479** | the final model |
 
 ![Per-fold comparison against the baseline](reports/figures/final_vs_baseline.png)
 
-The final model beats the baseline on all five folds on both AUCs. At a fixed 5% false alarm rate it finds 327 of the 584 melanomas against the baseline's 303 and the no-external run's 273.
+The final model beats the baseline on all five folds on both AUCs. The gain is small per fold but it never once goes the other way, which is the evidence that matters at five samples.
+
+What that means in cancers rather than decimals:
+
+![Melanomas found at a fixed 5% false-alarm rate](reports/figures/melanomas_found.png)
 
 ROC-AUC is the competition metric, but at 1.76% positives it is generous. PR-AUC and sensitivity at a fixed specificity are the numbers that say whether the model is useful, so all three are reported. Read the sensitivity number.
 
-Two caveats the [final report](reports/Final_Report.md) covers in full: the out-of-fold predictions were not retrieved from Kaggle, so these are per-fold means rather than the cleaner pooled out-of-fold score; and test-time augmentation was applied only on the last three epochs while the checkpoint was selected across all twelve, which biases the epoch choice.
+**Where it fails.** At that operating point the model still misses 264 of the 584 melanomas, and 12 of them it scores below 0.01, which is a confident wrong answer rather than a near miss. In the other direction, 118 benign lesions score above 0.90. The [final report](reports/Final_Report.md) names the worst cases image by image.
 
-Raw numbers: [reports/results.csv](reports/results.csv) (baseline), [reports/final_results.csv](reports/final_results.csv) (final model).
+One caveat worth knowing before you read the tables: test-time augmentation was applied only on the last three epochs while the checkpoint was selected across all twelve, which biases which epoch gets picked. It does not affect the out-of-fold score above, which is measured on predictions rather than on the selection rule. The final report covers it in full.
+
+Raw numbers: [reports/results.csv](reports/results.csv) (baseline), [reports/final_results.csv](reports/final_results.csv) (per fold), [reports/final_oof.csv](reports/final_oof.csv) (every photo). Both figures rebuild with `python src/make_figures.py`.
 
 ## Quickstart
 
@@ -176,18 +182,53 @@ python src/final_report.py --in_dir reports
 
 Both runners append each finished fold to their results CSV and skip what is already there on a restart, which matters because the final run is measured in hours.
 
-Hardware and runtime, on a Kaggle T4: baseline 22 minutes a fold, 1.9 GPU hours for all ten runs. Final model 139 minutes a fold, 11.6 GPU hours for five. Kaggle allows two concurrent GPU sessions, so splitting the folds across two notebooks roughly halves the wall clock. Use T4, not P100 — current PyTorch builds no longer compile for Pascal and a P100 reports `cuda.is_available() == True` before failing on the first kernel launch.
+Hardware and runtime, on a Kaggle T4: baseline 22 minutes a fold, 1.9 GPU hours for all ten runs. Final model 139 minutes a fold, 11.6 GPU hours for five. Kaggle allows two concurrent GPU sessions, so splitting the folds across two notebooks roughly halves the wall clock. Use T4, not P100. Current PyTorch builds no longer compile for Pascal and a P100 reports `cuda.is_available() == True` before failing on the first kernel launch.
 
 On Kaggle, use the notebooks in [kaggle/](kaggle/) rather than the commands above.
 
 ### Single-image inference
 
+[predict.py](predict.py) loads saved weights and scores one photo. It never trains anything.
+
 ```bash
-# TODO: predict.py is not written and no weights are published.
 python predict.py --image path/to/lesion.jpg
 ```
 
-`--save_weights` writes per-fold checkpoints to `reports/weights/`, so the pieces exist; the wrapper does not.
+```
+  Image        ISIC_8306697.jpg
+  Model        tf_efficientnet_b4 @300px, 5-fold ensemble, 4x flip TTA
+
+  Prediction:  MALIGNANT (melanoma) | Confidence: 99.7%
+
+  Melanoma probability   0.9974
+  Decision threshold     0.6245
+  Risk band              HIGH - refer urgently
+  Fold agreement         0.0141 spread across 5 models
+  Took                   1.91s
+```
+
+`ISIC_8306697` is a confirmed melanoma, and 0.9974 is its real out-of-fold probability from [reports/final_oof.csv](reports/final_oof.csv), scored by the one fold model that never trained on it. The threshold, timing and fold spread are from a live run of the command above.
+
+The model also takes the patient's details, which is what the metadata branch is for. Anything you leave out becomes the `unknown` category, which it was trained to handle because a tenth of the real dataset is missing it too:
+
+```bash
+python predict.py --image lesion.jpg --sex male --age 55 --site torso
+```
+
+Point `--weights` at a folder and it averages the fold models, which is the configuration the reported numbers describe. Point `--image` at a folder and add `--csv out.csv` to score a batch.
+
+```bash
+python predict.py --image lesion.jpg --weights models/          # 5-fold ensemble
+python predict.py --image photos/ --csv predictions.csv         # batch
+```
+
+Two things it does deliberately:
+
+**The preprocessing is imported from the training code, not reimplemented.** Centre square crop, resize to 512, DullRazor hair removal, resize to the model's input, ImageNet normalisation, using the same functions `step3_resize_images.py` and `MelanomaDataset` use. If inference preprocessing drifts from training preprocessing the model is being shown a distribution it never saw, and nothing in the output would tell you.
+
+**It refuses a broken checkpoint instead of predicting from it.** BatchNorm stores the running variance of its input, and real photos always give a positive variance. A layer sitting at zero means every training image was identical, which is exactly what the old black-square bug produced (see [reports/Experiment_Report.md](reports/Experiment_Report.md)). Those checkpoints load without complaint and then return probability 1.0000 for anything, including a photo of a leaf. `predict.py` checks for it and stops.
+
+Weights are not in the repository. They are large binaries and `.gitignore` excludes them. Train with `--save_weights`, or download the fold checkpoints from the Kaggle run into `models/`.
 
 ### The EDA notebook
 
@@ -202,7 +243,8 @@ It needs `data/raw/` populated. Most cells fail without it.
 ```
 melanoma-classification/
 ├── README.md
-├── requirements.txt        # pinned, PyTorch, needs Python 3.12
+├── predict.py              # single-image inference, loads saved weights
+├── requirements.txt        # pinned, PyTorch, Python 3.12
 ├── run_all.sh              # the preprocessing steps end to end
 ├── run_colab.py            # Colab runner for the final model
 ├── configs/
@@ -247,7 +289,7 @@ melanoma-classification/
     └── final_report.py              # final model report, out-of-fold, ensemble
 ```
 
-Still missing: `predict.py`, published weights, and `configs/` is empty — every run is driven by command-line flags rather than a config file.
+`configs/` is empty: every run is driven by command-line flags rather than a config file. Trained weights are not committed. They are large binaries and `.gitignore` excludes them.
 
 ## Notes and limitations
 

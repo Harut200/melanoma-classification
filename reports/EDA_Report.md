@@ -7,7 +7,7 @@
 
 ## 1. Introduction
 
-Melanoma is a kind of skin cancer that starts in the melanocytes — the cells responsible for
+Melanoma is a kind of skin cancer that starts in the melanocytes, the cells responsible for
 producing pigment in the skin. The pigment is called melanin.
 
 The exact cause of all melanomas isn't clear. Although melanoma is less common than some other
@@ -43,22 +43,22 @@ predictive model.
 | `sex` | ✓ | ✓ |
 | `age_approx` | ✓ | ✓ |
 | `anatom_site_general_challenge` | ✓ | ✓ |
-| `diagnosis` | ✓ | — |
-| `benign_malignant` | ✓ | — |
-| `target` | ✓ | — |
+| `diagnosis` | ✓ | n/a |
+| `benign_malignant` | ✓ | n/a |
+| `target` | ✓ | n/a |
 
 ### Missing values
 
-| Column | Train — missing | Test — missing |
+| Column | Train missing | Test missing |
 | --- | ---: | ---: |
 | `image_name` | 0 | 0 |
 | `patient_id` | 0 | 0 |
 | `sex` | 65 | 0 |
 | `age_approx` | 68 | 0 |
 | `anatom_site_general_challenge` | 527 | 351 |
-| `diagnosis` | 0 | — |
-| `benign_malignant` | 0 | — |
-| `target` | 0 | — |
+| `diagnosis` | 0 | n/a |
+| `benign_malignant` | 0 | n/a |
+| `target` | 0 | n/a |
 
 The missing values in `sex` and `age_approx` are **dependent / correlated**.
 
@@ -124,9 +124,9 @@ images must be resized to a consistent input size during the preprocessing phase
 
 ### 1. Missing data
 
-The proportion of missing data is very low relative to the dataset size (`sex` — 0.196%,
-`age_approx` — 0.205%, `anatom_site_general_challenge` — 1.59% in the training dataset, and
-`anatom_site_general_challenge` — 3.196% in the test dataset), so dropping the affected rows would
+The proportion of missing data is very low relative to the dataset size (`sex` at 0.196%,
+`age_approx` at 0.205%, `anatom_site_general_challenge` at 1.59% in the training dataset, and
+`anatom_site_general_challenge` at 3.196% in the test dataset), so dropping the affected rows would
 have minimal impact on the overall dataset.
 
 Alternatively, `sex` and `anatom_site_general_challenge` can be filled using the mode or an
@@ -143,7 +143,7 @@ As noted in the image resolution analysis, all images must be resized to a consi
 before being used for model training. Additionally, removing hair artifacts from images may
 further improve model accuracy by reducing visual noise unrelated to the lesion itself.
 
-Source — https://www.mdpi.com/2076-3417/16/4/1819
+Source: https://www.mdpi.com/2076-3417/16/4/1819
 
 ### 4. A patient-level split
 

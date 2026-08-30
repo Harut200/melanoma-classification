@@ -18,7 +18,7 @@ Every script prints `--help` if you run it with no options.
 The server: Rocky Linux 10, Intel i5-13500 (14 cores / 20 threads), 62 GB RAM,
 ~390 GB free. Everything here is CPU work, so no GPU is needed.
 
-**Training the model does not happen here** — there is no GPU on this box.
+**Training the model does not happen here.** There is no GPU on this box.
 Step 5 packages the data so it can go to a machine that has one.
 
 ## Setup, once
@@ -99,7 +99,7 @@ Two things happen to each photo:
 - **Hair removal.** Body hair lying across a mole is noise. We find the dark thin
   lines and paint over them using the surrounding colours.
 
-Safe to stop and restart — photos that are already done get skipped.
+Safe to stop and restart. Photos that are already done get skipped.
 
 ## Step 4 - add ISIC 2019
 
@@ -156,16 +156,16 @@ would take a long time to save almost nothing.
 
 ## If something goes wrong
 
-**"403" or an empty file list from Kaggle** — you have not clicked "Join
+**"403" or an empty file list from Kaggle.** You have not clicked "Join
 Competition" on the website.
 
-**Step 2 says it found an unexpected body site** — external data came in with
+**Step 2 says it found an unexpected body site.** External data came in with
 names step 2 does not know. Run step 4's `--prepare` first, which translates
 them.
 
-**Step 3 is slow** — check you passed `--workers 20`. The default uses every
+**Step 3 is slow.** Check you passed `--workers 20`. The default uses every
 core, but if you are sharing the machine you may want fewer.
 
-**Step 5 warns the photo count and the csv row count disagree** — usually step 3
+**Step 5 warns the photo count and the csv row count disagree.** Usually step 3
 has not finished, or the external photos have not been resized yet. Do not send
 the package until they match.

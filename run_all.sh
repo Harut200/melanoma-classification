@@ -21,8 +21,9 @@ set -e
 cd "$(dirname "$0")"
 PYTHON=.venv/bin/python
 
-# Use every core for the CPU-heavy steps.
-WORKERS=$(nproc)
+# Use every core for the CPU-heavy steps. nproc is GNU coreutils and does not
+# exist on macOS, so fall back to sysctl there, then to 4.
+WORKERS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 say() {
     echo ""
