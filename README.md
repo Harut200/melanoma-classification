@@ -322,7 +322,6 @@ Still unmeasured: generalization to cameras and clinics outside the ISIC archive
 
 Final project, Picsart Academy.
 
-- Ruzanna Barseghyan
-- Anahit Tumasyan
-- Mariam Petrosyan
-- Harutyun Kesablyan
+- Team Lead: Harutyun Kesablyan
+- ML Engineer: Anahit Tumasyan
+- Data Analyst: Mariam Petrosyan
